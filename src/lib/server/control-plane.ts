@@ -137,7 +137,7 @@ export async function createKitchen(
 export async function getKitchenAccess(db: D1Database, userId: string, kitchenId: string) {
 	return db
 		.prepare(
-			`SELECT k.id, k.name, k.organisation_id AS organisationId,
+			`SELECT k.id, k.name, k.organisation_id AS organisationId, k.agent_guidance AS agentGuidance,
 			 CASE WHEN om.role = 'owner' THEN 'head_chef' ELSE km.role END AS role
 			 FROM kitchens k
 			 LEFT JOIN kitchen_memberships km ON km.kitchen_id = k.id AND km.user_id = ?
@@ -145,7 +145,7 @@ export async function getKitchenAccess(db: D1Database, userId: string, kitchenId
 			 WHERE k.id = ? AND (km.user_id IS NOT NULL OR om.role = 'owner')`
 		)
 		.bind(userId, userId, kitchenId)
-		.first<{ id: string; name: string; organisationId: string; role: KitchenRole }>();
+		.first<{ id: string; name: string; organisationId: string; agentGuidance: string; role: KitchenRole }>();
 }
 
 export async function createApp(db: D1Database, user: UserIdentity, kitchenId: string, name: string) {
