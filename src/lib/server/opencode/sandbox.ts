@@ -82,6 +82,16 @@ const DOMAIN_ALLOW_LIST =
  * opencode starts, so there's always something deployable — the agent edits
  * this rather than starting from an empty directory, and "Deploy" always has
  * a `wrangler.jsonc` to run against even before the agent touches anything.
+ *
+ * Also seeds an `AGENTS.md` — opencode reads that file from its working
+ * directory as project instructions. Without it, an agent asked to "build a
+ * to-do app" will happily write `index.html`/`app.js`/`styles.css` and call
+ * the job done, never touching `index.js` or `wrangler.jsonc`; `wrangler
+ * deploy` then just redeploys the untouched placeholder Worker, since nothing
+ * in the project directory is served except what the Worker's `fetch`
+ * handler (or its Static Assets config) actually returns. Confirmed live:
+ * this exact sequence left a deployed Worker still serving "Hello from
+ * vibe-<id>!" after the agent reported a finished to-do app.
  */
 function starterFiles(projectId: string): Record<string, string> {
 	const workerName = `vibe-${projectId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -91,7 +101,48 @@ function starterFiles(projectId: string): Record<string, string> {
 			null,
 			2
 		),
-		'index.js': `export default {\n\tasync fetch(request) {\n\t\treturn new Response('Hello from ${workerName}! Ask the agent to build something.');\n\t}\n};\n`
+		'index.js': `export default {\n\tasync fetch(request) {\n\t\treturn new Response('Hello from ${workerName}! Ask the agent to build something.');\n\t}\n};\n`,
+		'AGENTS.md': `# Deploying this app
+
+This directory is a Cloudflare Workers project. "Deploy" (a button in the
+surrounding platform, not something you run yourself) does exactly one thing:
+runs \`wrangler deploy\` from this directory. Nothing else is inspected. That
+means:
+
+- **Only what the Worker's \`fetch\` handler returns is ever served.** Writing
+  \`index.html\`, \`app.js\`, \`styles.css\`, or any other file does nothing on
+  its own — those files are not served unless something wires them in. Pick
+  one:
+  - **Static Assets** (preferred for a plain HTML/CSS/JS app): add an
+    \`"assets"\` block to \`wrangler.jsonc\`, e.g.
+    \`"assets": { "directory": "./public" }\`, and put your static files in
+    that directory. If \`index.js\` still has a \`main\` entry, its \`fetch\`
+    handler can serve dynamic routes and fall back to \`env.ASSETS.fetch(request)\`
+    for everything else; if the app is pure static content you can drop \`main\`
+    entirely and let assets serve directly.
+  - **Inline in the Worker**: build the response (HTML string, JSON, etc.)
+    directly inside \`index.js\`'s \`fetch\` handler.
+- **Keep \`wrangler.jsonc\`'s \`name\` field as \`${workerName}\`.** The platform's
+  deploy/undeploy/preview-link actions all key off this file's own \`name\`
+  rather than a value they pass in — renaming it points those actions at the
+  wrong (or no) worker.
+- **Keep the default \`workers.dev\` subdomain enabled** (don't set
+  \`"workers_dev": false\` or replace it with only a custom route) — the
+  platform reads the live app URL by scanning \`wrangler deploy\`'s own output
+  for a \`*.workers.dev\` link.
+- **Install dependencies before the user clicks Deploy.** \`wrangler deploy\`
+  bundles from what is already on disk; it does not run \`npm install\` for
+  you. If you add a package to \`package.json\`, run \`npm install\` yourself in
+  the same turn.
+- **This is the Workers runtime, not Node.js.** Avoid Node-only built-ins
+  (\`fs\`, \`path\`, etc.) unless you add \`"compatibility_flags": ["nodejs_compat"]\`
+  to \`wrangler.jsonc\`.
+
+After making a change, re-read \`index.js\`/\`wrangler.jsonc\` and confirm the
+thing you just built is actually reachable from the Worker's \`fetch\` handler
+or assets config — not just present as a file — before telling the user it's
+done.
+`
 	};
 }
 

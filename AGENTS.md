@@ -47,6 +47,25 @@ OpenCode/Daytona workspace.
 6. For a release, run `npx wrangler deploy`, then make a read-only request to
    the affected `https://vibe.kitchen` route to verify it.
 
+## Instructing the agent that builds Kitchen apps
+
+Every project's sandbox starts from `starterFiles()` in
+`src/lib/server/opencode/sandbox.ts`, which seeds `wrangler.jsonc`, `index.js`
+*and* an `AGENTS.md` — opencode reads that file from its working directory as
+project instructions, the same convention this file follows for us. That
+seeded `AGENTS.md` is the only place the coding agent is told what makes an
+app it writes actually deployable: only what the Worker's `fetch` handler (or
+its Static Assets config) serves is live after `wrangler deploy`, so writing
+`index.html`/`app.js`/`styles.css` on their own does nothing — confirmed live,
+where an agent reported a finished to-do app while the deployed Worker still
+served the untouched "Hello from vibe-…" placeholder. Keep that seeded file's
+guidance (Static Assets vs. inline responses, preserving `wrangler.jsonc`'s
+`name` and `workers_dev` subdomain, installing dependencies before Deploy,
+Workers-vs-Node runtime) in sync with reality as the starter scaffold or
+deploy flow changes. This is a stopgap for wrapper step 5 below (durable
+per-Kitchen/App skills); once that exists, review whether this hardcoded file
+should move there instead of living only in the generic starter.
+
 ## Wrapper implementation order
 
 1. Finish the authenticated organisation/Kitchen/App dashboard and invitation
