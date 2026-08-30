@@ -26,9 +26,11 @@ OpenCode/Daytona workspace.
   `https://vibe.kitchen`.
 - D1 control plane binding: `DB` → `ivcp-control-plane`; migrations live in
   `migrations/`.
-- Required Worker secrets already configured in production: `DAYTONA_API_KEY`,
-  `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `BETTER_AUTH_SECRET`,
-  `BETTER_AUTH_URL`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL`.
+- Check which Worker secrets are currently configured in production with
+  `npx wrangler secret list` — don't rely on a hardcoded list here, since it
+  drifts out of sync with reality. (A hardcoded list in this file once missed
+  a newly-required secret; that would have broken session creation in
+  production had it shipped before the gap was caught.)
 - Add or rotate a production value with `npx wrangler secret put NAME`; do not
   add secret values to `wrangler.jsonc`, `.dev.vars`, commits, or terminal
   output.
