@@ -126,7 +126,6 @@
 									</p>
 								</div>
 								<div class="flex flex-wrap gap-3">
-									<a href={`/kitchens/${kitchen.id}`} class="text-xs font-medium text-amber-700 hover:underline">Kitchen settings</a>
 									<button
 										type="button"
 										onclick={() => (newAppKitchenId = newAppKitchenId === kitchen.id ? '' : kitchen.id)}

@@ -12,7 +12,7 @@ import {
 	revokeInvitation
 } from '$lib/server/control-plane';
 import { sendInvitationEmail } from '$lib/server/mail';
-import { getSandboxProvider } from '$lib/server/opencode/sandbox';
+import { reconcileSandboxStates } from '$lib/server/opencode/sandbox';
 
 function db(platform: App.Platform | undefined) {
 	if (!platform?.env.DB) throw new Error('Cloudflare D1 is required for the control plane.');
@@ -31,21 +31,7 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
 			kitchens.map(async (k) => [k.id, await listApps(database, locals.user!.id, k.id)] as const)
 		)
 	);
-	// The `running` state in D1 only means "a sandbox was provisioned at some
-	// point" — it never gets flipped back when the underlying sandbox goes
-	// idle. Cross-check the ones claiming to be running against Daytona's own
-	// state so the Kitchens list doesn't say "running" for a sandbox that
-	// actually needs waking up. Never wakes a sandbox to check it.
-	const sandboxProvider = getSandboxProvider();
-	await Promise.all(
-		Object.values(apps)
-			.flat()
-			.map(async (app) => {
-				if (app.sandboxState !== 'running') return;
-				const awake = await sandboxProvider.isSandboxAwake(app.id).catch(() => true);
-				if (!awake) app.sandboxState = 'sleeping';
-			})
-	);
+	await reconcileSandboxStates(Object.values(apps).flat());
 	const pendingInvitations =
 		role === 'owner' ? await listPendingInvitations(database, organisation.id) : [];
 
