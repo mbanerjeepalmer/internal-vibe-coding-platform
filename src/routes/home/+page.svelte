@@ -39,6 +39,14 @@
 			>
 				{data.user.name || data.user.email}
 			</a>
+			{#if data.isExecutiveChef}
+				<a
+					href="/executive"
+					class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
+				>
+					👨‍🍳 Executive console
+				</a>
+			{/if}
 			<a
 				href="/account"
 				class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
