@@ -59,6 +59,16 @@ const OPENCODE_VERSION = '1.18.25';
 const OPENCODE_PORT = 4096;
 const WRANGLER_VERSION = '4.127.1';
 
+// Daytona sandboxes sit behind a domain-allowlisting egress proxy (an HTTPS
+// request to a non-listed domain gets a mid-handshake connection reset, which
+// surfaces to `wrangler` as a generic "fetch failed" network error — this is
+// what broke `wrangler deploy`, confirmed against a live sandbox). The
+// default allowlist doesn't include Cloudflare's API. `domainAllowList`
+// replaces rather than extends the default list, so it must also keep npm's
+// registry (needed for `npx wrangler` itself, and opencode's own install).
+const DOMAIN_ALLOW_LIST =
+	'api.cloudflare.com,*.cloudflare.com,workers.dev,*.workers.dev,api.openai.com,registry.npmjs.org,*.npmjs.org';
+
 /**
  * A minimal Workers project seeded into the agent's working directory before
  * opencode starts, so there's always something deployable — the agent edits
@@ -240,7 +250,10 @@ class DaytonaSandboxProvider implements SandboxProvider {
 	private raw = new Map<string, DaytonaSandboxHandle>();
 	private daytonaPromise: ReturnType<typeof this.makeClient> | undefined;
 
-	constructor(private apiKey: string) {}
+	constructor(
+		private apiKey: string,
+		private openaiApiKey?: string
+	) {}
 
 	private async makeClient() {
 		patchFetchForWorkersCacheBug();
@@ -291,11 +304,21 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			break;
 		}
 		if (!daytonaSandbox) {
-			daytonaSandbox = await daytona.create({ labels: label }, { timeout: 90 });
+			daytonaSandbox = await daytona.create(
+				{ labels: label, domainAllowList: DOMAIN_ALLOW_LIST },
+				{ timeout: 90 }
+			);
 		} else if (daytonaSandbox.state !== 'started') {
 			await daytona.start(daytonaSandbox, 60);
 		}
 		this.raw.set(projectId, daytonaSandbox);
+		if (this.openaiApiKey) {
+			// OpenCode reads the standard OpenAI environment variable. `updateEnv`
+			// changes the sandbox daemon's environment, so it is applied before a
+			// new `opencode serve` process is started and never travels through the
+			// browser, prompt, OpenCode API, or repository.
+			await daytonaSandbox.updateEnv({ OPENAI_API_KEY: this.openaiApiKey });
+		}
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
 		await this.ensureProjectScaffold(daytonaSandbox, projectId);
@@ -463,7 +486,7 @@ let provider: SandboxProvider | undefined;
 export function getSandboxProvider(): SandboxProvider {
 	if (!provider) {
 		provider = env.DAYTONA_API_KEY
-			? new DaytonaSandboxProvider(env.DAYTONA_API_KEY)
+			? new DaytonaSandboxProvider(env.DAYTONA_API_KEY, env.OPENAI_API_KEY)
 			: new LocalProcessSandboxProvider();
 	}
 	return provider;

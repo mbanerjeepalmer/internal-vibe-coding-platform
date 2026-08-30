@@ -68,7 +68,9 @@ export class OpencodeSession {
 		const modelsRes = await fetch(`/api/kitchen/${this.projectId}/models`);
 		const { models } = (await modelsRes.json()) as { models: ModelSummary[] };
 		this.models = models;
-		this.model = models.find((m) => m.free) ?? models[0] ?? null;
+		// Prefer a model backed by the Kitchen's configured OpenAI credential;
+		// retain the free-model fallback for local development without a key.
+		this.model = models.find((m) => m.providerID === 'openai') ?? models.find((m) => m.free) ?? models[0] ?? null;
 
 		const sessionRes = await fetch(`/api/kitchen/${this.projectId}/session`, {
 			method: 'POST',
