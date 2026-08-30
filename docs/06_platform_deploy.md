@@ -1,0 +1,6 @@
+# Internal Vibe Coding Platform
+
+We need to deploy. Other changes are being made in parallel. But now we need main to go to https://vibe.kitchen.
+
+<!--Communicate here with a timestamp at the start of the line and a terse note afterwards. Note you may be working in a worktree so would need to refer back to the home.-->
+2026-08-30: Worktree created at ../ivcp-platform-deploy on branch worktree-platform-deploy (home repo: internal-vibe-coding-platform, main branch). Carried across `.dev.vars` (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, DAYTONA_API_KEY) from ../ivcp-v2-real-spec, uploaded them as Worker secrets via `wrangler secret put`, and added a `routes` entry to `wrangler.jsonc` for `vibe.kitchen` (`custom_domain: true`). First `wrangler deploy` failed to attach the custom domain (Cloudflare API reported existing DNS records on the apex); the actual records were just MX/TXT for email forwarding, no A/CNAME conflict, so a second `wrangler deploy` succeeded and attached the custom domain cleanly. `https://vibe.kitchen` is live (200 OK). Also deduped a stray second `"dependencies"` key in `package.json` that wrangler was warning about on every deploy. Merged worktree-platform-deploy into main (fast-forward).
