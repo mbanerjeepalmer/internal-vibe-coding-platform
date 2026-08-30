@@ -152,6 +152,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 	constructor(private apiKey: string) {}
 
 	private async makeClient() {
+		patchFetchForWorkersCacheBug();
 		const { Daytona } = await import('@daytona/sdk');
 		return new Daytona({ apiKey: this.apiKey });
 	}
@@ -286,6 +287,36 @@ interface DaytonaProcess {
 		sessionId: string,
 		req: { command: string; runAsync?: boolean }
 	): Promise<unknown>;
+}
+
+let fetchPatched = false;
+
+/**
+ * `@daytona/sdk` talks to Daytona's API through axios, whose fetch adapter
+ * hardcodes `cache: 'default'` — but it does so by baking it into a `Request`
+ * object it constructs itself (`new Request(url, { cache: 'default', ... })`)
+ * and then calling `fetch(thatRequest)`, so patching `fetch`'s second
+ * argument does nothing; the Request object already carries the field.
+ * Cloudflare Workers' fetch rejects any Request built with an explicit
+ * `cache` value ("Unsupported cache mode: default") — confirmed live by
+ * deploying this to a real Worker, not assumed. Strip it at the `Request`
+ * constructor instead. Harmless on Node; needed on Workers.
+ */
+function patchFetchForWorkersCacheBug() {
+	if (fetchPatched) return;
+	fetchPatched = true;
+	const OriginalRequest = globalThis.Request;
+	if (!OriginalRequest) return;
+	globalThis.Request = new Proxy(OriginalRequest, {
+		construct(target, args: [RequestInfo | URL, RequestInit?]) {
+			const [input, init] = args;
+			if (init && typeof init === 'object' && 'cache' in init) {
+				const { cache: _cache, ...rest } = init;
+				return new target(input, rest);
+			}
+			return new target(input, init);
+		}
+	});
 }
 
 let provider: SandboxProvider | undefined;

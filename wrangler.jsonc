@@ -1,7 +1,8 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "ivcp-hardcoded-demo",
+	"name": "ivcp-opencode-wiring",
 	"compatibility_date": "2026-08-30",
+	"compatibility_flags": ["nodejs_compat"],
 	"main": ".svelte-kit/cloudflare/_worker.js",
 	"assets": {
 		"binding": "ASSETS",
