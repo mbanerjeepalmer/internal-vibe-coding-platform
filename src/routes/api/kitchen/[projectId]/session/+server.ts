@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
-import { createSession, switchModel, type ModelRef } from '$lib/server/opencode/client';
+import { createSession, listModels, resolveDefaultModel, switchModel } from '$lib/server/opencode/client';
 import { requireAppAccess } from '$lib/server/authz';
 import { claimSharedOpencodeSession, getAppAccess } from '$lib/server/control-plane';
 import { effectiveAppSecrets } from '$lib/server/secrets';
@@ -16,9 +16,17 @@ export const POST: RequestHandler = async (event) => {
 	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, app.agentGuidance, secrets);
 	const session = await createSession(sandbox);
 
-	const body = (await event.request.json().catch(() => ({}))) as { model?: ModelRef };
-	if (body.model) {
-		await switchModel(sandbox, session.id, body.model);
+	// Resolve the model ourselves rather than trust whatever the client sent:
+	// the client resolves its own default from the /models route, and on a
+	// cold sandbox that fetch can land before opencode has finished loading
+	// its providers and come back with an empty list — silently skipping this
+	// switch left brand-new Apps permanently stuck on opencode's own default
+	// model instead of Luna, since a shared App session, once created, is
+	// reused by every future request and never gets its model touched again.
+	const models = await listModels(sandbox);
+	const defaultModel = resolveDefaultModel(models, app);
+	if (defaultModel) {
+		await switchModel(sandbox, session.id, defaultModel);
 	}
 
 	if (await claimSharedOpencodeSession(db, app.id, session.id)) {
