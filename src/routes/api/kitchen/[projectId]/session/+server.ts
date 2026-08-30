@@ -4,6 +4,7 @@ import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 import { createSession, switchModel, type ModelRef } from '$lib/server/opencode/client';
 import { requireAppAccess } from '$lib/server/authz';
 import { claimSharedOpencodeSession, getAppAccess } from '$lib/server/control-plane';
+import { effectiveAppSecrets } from '$lib/server/secrets';
 
 export const POST: RequestHandler = async (event) => {
 	const { db, user, app } = await requireAppAccess(event);
@@ -11,7 +12,8 @@ export const POST: RequestHandler = async (event) => {
 	// OpenCode conversation. Reopening the App therefore resumes its timeline.
 	if (app.opencodeSessionId) return json({ sessionId: app.opencodeSessionId });
 
-	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id);
+	const secrets = await effectiveAppSecrets(db, app.id, event.platform?.env.SECRET_ENCRYPTION_KEY);
+	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, secrets);
 	const session = await createSession(sandbox);
 
 	const body = (await event.request.json().catch(() => ({}))) as { model?: ModelRef };

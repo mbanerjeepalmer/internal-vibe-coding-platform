@@ -41,13 +41,13 @@ export interface AppStorage {
 }
 
 export interface SandboxProvider {
-	getOrCreateSandbox(projectId: string): Promise<Sandbox>;
+	getOrCreateSandbox(projectId: string, environment?: Record<string, string>): Promise<Sandbox>;
 	/** Resolves an arbitrary port inside a project's sandbox to a reachable URL. Sandbox must already exist. */
 	getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget>;
 	/** Tears the project's sandbox down entirely (the "hard delete this app" flow in docs/01_hardcoded_demo.md). */
 	destroySandbox(projectId: string): Promise<void>;
 	/** Runs `wrangler deploy` against whatever the agent has written in the project's working directory. */
-	deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult>;
+	deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage, environment?: Record<string, string>): Promise<DeployResult>;
 	/**
 	 * Runs `wrangler delete` in the project's working directory, tearing down
 	 * only the worker named in that directory's own `wrangler.jsonc` — since
@@ -165,6 +165,39 @@ Vibe database, or permanently delete it from the app's Storage controls. Do
 not attempt any of these from the sandbox. Before asking for a permanent delete,
 make clear that it erases the remote database and cannot be restored here.
 `,
+		'.opencode/skills/vibe-app-secrets/SKILL.md': `---
+name: vibe-app-secrets
+description: Use and request this Vibe App's environment-variable secrets without exposing credentials. Load when an API key, token, password, secret, credential, or environment variable is needed.
+---
+
+# Vibe App secrets
+
+This App receives credentials as environment variables. Kitchen secrets are shared with every App; App secrets belong only to this App and override the same Kitchen name. Refer to names, never values.
+
+Use a name in code, for example \`env.GOOGLE_MAPS_API_KEY\` in a Worker. Never print variables, dump the environment, put a value in source/configuration, commit it, or include it in a message, URL, log, or preview.
+
+If a name is not available, state the exact variable name and why it is needed, then ask the user to open **Manage secrets** for this App and paste it into the write-only **This App** field. A shared Kitchen credential needs a Head Chef using **Kitchen (shared)**. Never ask the user to paste a value into chat.
+
+To check which variables are available, run \`node -e "console.log(Object.keys(process.env).sort().join('\\n'))"\`. This prints names only. Never run \`env\`, \`printenv\`, or any command that prints values.
+
+App members may add or rotate App secrets in the platform's secret controls. Use an authorised platform secret-management tool only for this App and only with an uppercase variable name; otherwise direct the user to the write-only form. Rotation/deletion affects new runs and deploys; rotate on suspected exposure.
+
+When a missing App secret blocks work, call \`request_secret\` with the uppercase variable name and a short user-facing reason. This opens a secure write-only prompt in the chat; do not ask the user to paste the value into a message.
+`,
+		'.opencode/tools/request_secret.ts': `import { tool } from '@opencode-ai/plugin';
+
+export default tool({
+	description: 'Request that the user securely adds an App-scoped environment-variable secret. Use when a missing credential blocks work; this never accepts or returns the secret value.',
+	args: {
+		name: tool.schema.string().describe('Uppercase environment-variable name, for example GOOGLE_MAPS_API_KEY'),
+		reason: tool.schema.string().describe('Short explanation of why this App needs it')
+	},
+	async execute(args) {
+		if (!/^[A-Z][A-Z0-9_]{0,127}$/.test(args.name)) throw new Error('Secret names must be uppercase environment-variable names.');
+		return 'Secure secret request shown to the user. Do not ask for the value in chat.';
+	}
+});
+`,
 		'AGENTS.md': `# Deploying this app
 
 This directory is a Cloudflare Workers project. "Deploy" (a button in the
@@ -212,6 +245,9 @@ means:
 - The project-local \`vibe-app-storage\` skill is automatically available for
   database, storage, D1, SQL, schema, migration, persistence, backup, restore,
   relink, and deletion requests. Load it before changing persistent data.
+- The project-local \`vibe-app-secrets\` skill is automatically available for
+  credentials, API keys, tokens, passwords, secrets, and environment variables.
+  Load it before handling any of those.
 
 After making a change, re-read \`index.js\`/\`wrangler.jsonc\` and confirm the
 thing you just built is actually reachable from the Worker's \`fetch\` handler
@@ -226,10 +262,10 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 	private children = new Map<string, import('node:child_process').ChildProcess>();
 	private cwds = new Map<string, string>();
 
-	getOrCreateSandbox(projectId: string): Promise<Sandbox> {
+	getOrCreateSandbox(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
 		if (!existing) {
-			existing = this.spawn(projectId);
+			existing = this.spawn(projectId, environment);
 			this.sandboxes.set(projectId, existing);
 			existing.catch(() => this.sandboxes.delete(projectId));
 		}
@@ -249,8 +285,8 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		this.cwds.delete(projectId);
 	}
 
-	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, ['deploy'], storage);
+	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage, environment?: Record<string, string>): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['deploy'], storage, environment);
 	}
 
 	async undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult> {
@@ -261,7 +297,8 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		projectId: string,
 		creds: CloudflareCredentials,
 		args: string[],
-		storage?: AppStorage
+		storage?: AppStorage,
+		environment?: Record<string, string>
 	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const cwd = this.cwds.get(projectId);
@@ -283,7 +320,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 			const { stdout, stderr } = await run(
 				'npx',
 				['--yes', `wrangler@${WRANGLER_VERSION}`, ...args, '--config', config],
-				{ cwd, env: { ...process.env, ...creds }, timeout: 120_000 }
+				{ cwd, env: { ...process.env, ...creds, ...environment }, timeout: 120_000 }
 			);
 			const log = `${stdout}\n${stderr}`;
 			return { success: true, log, url: log.match(/https:\/\/\S+\.workers\.dev/)?.[0] };
@@ -296,7 +333,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		}
 	}
 
-	private async spawn(projectId: string): Promise<Sandbox> {
+	private async spawn(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
 		const { spawn } = await import('node:child_process');
 		const fs = await import('node:fs/promises');
 		const os = await import('node:os');
@@ -321,7 +358,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 			const child = spawn('opencode', ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
 				cwd,
 				stdio: ['ignore', 'pipe', 'pipe'],
-				env: { ...process.env }
+				env: { ...process.env, ...environment }
 			});
 			this.children.set(projectId, child);
 
@@ -418,10 +455,10 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return this.daytonaPromise;
 	}
 
-	getOrCreateSandbox(projectId: string): Promise<Sandbox> {
+	getOrCreateSandbox(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
 		if (!existing) {
-			existing = this.provision(projectId);
+			existing = this.provision(projectId, environment);
 			this.sandboxes.set(projectId, existing);
 			existing.catch(() => this.sandboxes.delete(projectId));
 		}
@@ -446,7 +483,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		this.raw.delete(projectId);
 	}
 
-	private async provision(projectId: string): Promise<Sandbox> {
+	private async provision(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
 		const daytona = await this.client();
 		const label = { 'vibe-project': projectId };
 
@@ -464,12 +501,12 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			await daytona.start(daytonaSandbox, 60);
 		}
 		this.raw.set(projectId, daytonaSandbox);
-		if (this.openaiApiKey) {
+		if (this.openaiApiKey || environment) {
 			// OpenCode reads the standard OpenAI environment variable. `updateEnv`
 			// changes the sandbox daemon's environment, so it is applied before a
 			// new `opencode serve` process is started and never travels through the
 			// browser, prompt, OpenCode API, or repository.
-			await daytonaSandbox.updateEnv({ OPENAI_API_KEY: this.openaiApiKey });
+			await daytonaSandbox.updateEnv({ ...(this.openaiApiKey ? { OPENAI_API_KEY: this.openaiApiKey } : {}), ...environment });
 		}
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
@@ -482,8 +519,8 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return { projectId, baseUrl: preview.url, headers };
 	}
 
-	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, 'deploy', storage);
+	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage, environment?: Record<string, string>): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'deploy', storage, environment);
 	}
 
 	async undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult> {
@@ -494,7 +531,8 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		projectId: string,
 		creds: CloudflareCredentials,
 		args: string,
-		storage?: AppStorage
+		storage?: AppStorage,
+		environment?: Record<string, string>
 	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const daytonaSandbox = this.raw.get(projectId);
@@ -507,7 +545,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		const result = await daytonaSandbox.process.executeCommand(
 			`cd ${PROJECT_DIR} && ${prepare}npx --yes wrangler@${WRANGLER_VERSION} ${args} --config ${config}`,
 			undefined,
-			creds,
+			{ ...creds, ...environment },
 			120
 		);
 		const log = result.result ?? '';
@@ -525,8 +563,10 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		const files = starterFiles(projectId);
 		if (check.result?.includes('present')) {
 			const storageGuide = files['.opencode/skills/vibe-app-storage/SKILL.md'].replace(/'/g, `'\\''`);
+			const secretsGuide = files['.opencode/skills/vibe-app-secrets/SKILL.md'].replace(/'/g, `'\\''`);
+			const requestTool = files['.opencode/tools/request_secret.ts'].replace(/'/g, `'\\''`);
 			const result = await daytonaSandbox.process.executeCommand(
-				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md`
+				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/vibe-app-secrets .opencode/tools && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; test -f .opencode/skills/vibe-app-secrets/SKILL.md || printf '%s' '${secretsGuide}' > .opencode/skills/vibe-app-secrets/SKILL.md; test -f .opencode/tools/request_secret.ts || printf '%s' '${requestTool}' > .opencode/tools/request_secret.ts; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'vibe-app-secrets' AGENTS.md || printf '\n\nFor credentials, API keys, tokens, passwords, secrets, or environment variables, load the \`vibe-app-secrets\` skill.\n' >> AGENTS.md`
 			);
 			if (result.exitCode !== 0) throw new Error(`adding storage guidance to the Daytona sandbox failed:\n${result.result}`);
 			return;
@@ -536,7 +576,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			.map(([name, contents]) => `printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ${PROJECT_DIR}/${name}`)
 			.join(' && ');
 		const result = await daytonaSandbox.process.executeCommand(
-			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage && ${writes}`
+			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage ${PROJECT_DIR}/.opencode/skills/vibe-app-secrets ${PROJECT_DIR}/.opencode/tools && ${writes}`
 		);
 		if (result.exitCode !== 0) {
 			throw new Error(`seeding the starter project into the Daytona sandbox failed:\n${result.result}`);

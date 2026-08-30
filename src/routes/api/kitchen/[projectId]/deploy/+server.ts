@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 import { requireAppAccess } from '$lib/server/authz';
 import { getAppStorage, getOrCreateAppStorage } from '$lib/server/app-storage';
+import { effectiveAppSecrets } from '$lib/server/secrets';
 
 function cfCreds(platform: App.Platform | undefined) {
 	const env = platform?.env;
@@ -23,7 +24,8 @@ export const POST: RequestHandler = async (event) => {
 		);
 	}
 	const storage = await getOrCreateAppStorage(db, app.id, creds);
-	const result = await getSandboxProvider().deployProject(app.id, creds, storage);
+	const secrets = await effectiveAppSecrets(db, app.id, event.platform?.env.SECRET_ENCRYPTION_KEY);
+	const result = await getSandboxProvider().deployProject(app.id, creds, storage, secrets);
 	return json(result);
 };
 
