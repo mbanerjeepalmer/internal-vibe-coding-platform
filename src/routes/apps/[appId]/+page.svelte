@@ -421,7 +421,6 @@
 					disabled={!ready}
 					busy={session.busy}
 					placeholder="Ask opencode to do something"
-					modelLabel={session.model?.name ?? ''}
 					onSubmit={submit}
 				/>
 			</div>

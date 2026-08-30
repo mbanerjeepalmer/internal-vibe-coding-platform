@@ -13,7 +13,6 @@
 		submitTestId,
 		attachTestId = 'attach-file',
 		agentLabel = 'Build',
-		modelLabel = '',
 		onSubmit,
 		onAttach
 	}: {
@@ -28,7 +27,6 @@
 		submitTestId?: string;
 		attachTestId?: string;
 		agentLabel?: string;
-		modelLabel?: string;
 		onSubmit?: (text: string) => void;
 		onAttach?: () => void;
 	} = $props();
@@ -116,15 +114,6 @@
 					class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600"
 				>
 					{agentLabel}
-				</span>
-				<span
-					class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500"
-				>
-					{#if modelLabel}
-						{modelLabel}
-					{:else}
-						<span class="text-shimmer">Loading model…</span>
-					{/if}
 				</span>
 			</div>
 
