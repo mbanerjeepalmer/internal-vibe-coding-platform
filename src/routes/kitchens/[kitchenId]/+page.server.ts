@@ -1,0 +1,44 @@
+import { error, fail, redirect } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
+import {
+	createApp,
+	getKitchenAccess,
+	listApps,
+	listKitchenMembers
+} from '$lib/server/control-plane';
+
+function db(platform: App.Platform | undefined) {
+	if (!platform?.env.DB) throw new Error('Cloudflare D1 is required for the control plane.');
+	return platform.env.DB;
+}
+
+export const load: PageServerLoad = async ({ params, locals, platform, url }) => {
+	if (!locals.user) redirect(307, `/signin?next=${encodeURIComponent(url.pathname)}`);
+
+	const database = db(platform);
+	const kitchen = await getKitchenAccess(database, locals.user.id, params.kitchenId);
+	if (!kitchen) throw error(404, 'Kitchen not found, or you do not have access to it.');
+
+	const [apps, members] = await Promise.all([
+		listApps(database, locals.user.id, kitchen.id),
+		listKitchenMembers(database, kitchen.id)
+	]);
+
+	return { kitchen, apps, members, user: locals.user };
+};
+
+export const actions: Actions = {
+	createApp: async ({ request, locals, platform, params }) => {
+		if (!locals.user) return fail(401, { message: 'Sign in first.' });
+		const form = await request.formData();
+		const name = String(form.get('name') ?? '').trim();
+		if (!name) return fail(400, { message: 'App name is required.' });
+		let appId: string;
+		try {
+			({ id: appId } = await createApp(db(platform), locals.user, params.kitchenId, name));
+		} catch (err) {
+			return fail(400, { message: err instanceof Error ? err.message : String(err) });
+		}
+		redirect(303, `/apps/${appId}`);
+	}
+};

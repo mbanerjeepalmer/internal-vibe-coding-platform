@@ -118,12 +118,31 @@
 		await session.destroySandbox();
 		destroying = false;
 	}
+
+	let appName = $state(data.app.name);
+
+	async function renameApp(name: string) {
+		const previous = appName;
+		appName = name;
+		const form = new FormData();
+		form.set('name', name);
+		const response = await fetch('?/rename', {
+			method: 'POST',
+			body: form,
+			headers: { 'x-sveltekit-action': 'true' }
+		});
+		if (!response.ok) appName = previous;
+	}
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
 	<TopBar
 		kitchenName={data.app.kitchenName}
+		kitchenHref={`/kitchens/${data.app.kitchenId}`}
+		appName={appName}
+		onRenameApp={renameApp}
 		name={data.user.name || data.user.email}
+		userHref={`/users/${data.user.id}`}
 		role={data.app.role === 'head_chef' ? 'Head Chef' : 'Chef'}
 	/>
 
@@ -136,7 +155,7 @@
 				<span
 					class="h-1.5 w-1.5 shrink-0 rounded-full {session.busy ? 'bg-blue-500' : 'bg-emerald-500'}"
 				></span>
-				<span class="truncate text-slate-700">{data.app.name}</span>
+				<span class="truncate text-slate-700">{appName}</span>
 			</div>
 
 			<p class="mt-4 mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">

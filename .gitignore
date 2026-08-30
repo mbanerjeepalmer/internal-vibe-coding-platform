@@ -29,6 +29,7 @@ vite.config.ts.timestamp-*
 /playwright-report
 /blob-report
 /playwright/.cache
+/playwright/.auth
 
 # Not essential, but sometimes MCP configs  include secrets
 .mcp.json

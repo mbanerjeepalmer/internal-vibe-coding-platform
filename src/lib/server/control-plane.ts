@@ -417,6 +417,58 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 		}>();
 }
 
+export async function renameApp(db: D1Database, actor: UserIdentity, appId: string, name: string) {
+	const trimmed = name.trim();
+	if (!trimmed) throw new Error('App name is required.');
+	const app = await getAppAccess(db, actor.id, appId);
+	if (!app) throw new Error('You do not have access to this app.');
+	await db.prepare('UPDATE apps SET name = ?, updated_at = ? WHERE id = ?').bind(trimmed, now(), appId).run();
+	const kitchen = await getKitchenAccess(db, actor.id, app.kitchenId);
+	if (kitchen) await recordActivity(db, kitchen.organisationId, actor.id, 'app', appId, 'renamed');
+	return { id: appId, name: trimmed };
+}
+
+/**
+ * A profile view of another user's Kitchens and apps, scoped to what the
+ * viewer can already see. The target's own kitchen list is never trusted as
+ * authority — each kitchen is re-checked against the viewer's own access
+ * (`getKitchenAccess`) before its apps are included, so this can never leak
+ * an app the viewer couldn't otherwise reach directly.
+ */
+export async function getUserProfile(db: D1Database, viewerId: string, targetUserId: string) {
+	const target = await db
+		.prepare('SELECT id, name, email FROM "user" WHERE id = ?')
+		.bind(targetUserId)
+		.first<{ id: string; name: string; email: string }>();
+	if (!target) return null;
+
+	const targetKitchens = await db
+		.prepare(
+			`SELECT DISTINCT k.id, k.name
+			 FROM kitchens k
+			 LEFT JOIN kitchen_memberships km ON km.kitchen_id = k.id
+			 LEFT JOIN organisation_memberships om ON om.organisation_id = k.organisation_id
+			 WHERE km.user_id = ? OR (om.user_id = ? AND om.role = 'owner')
+			 ORDER BY k.created_at`
+		)
+		.bind(targetUserId, targetUserId)
+		.all<{ id: string; name: string }>();
+
+	const kitchens: Array<{
+		id: string;
+		name: string;
+		apps: Array<{ id: string; name: string; sandboxState: string; updatedAt: string }>;
+	}> = [];
+	for (const kitchen of targetKitchens.results) {
+		const viewerAccess = await getKitchenAccess(db, viewerId, kitchen.id);
+		if (!viewerAccess) continue;
+		const apps = await listApps(db, viewerId, kitchen.id);
+		kitchens.push({ id: kitchen.id, name: kitchen.name, apps });
+	}
+
+	return { user: target, kitchens };
+}
+
 /** Only a Kitchen's Head Chef may set the default model every app in that Kitchen starts with. `model: null` clears the override, falling back to the platform default (Luna). */
 export async function setKitchenDefaultModel(
 	db: D1Database,

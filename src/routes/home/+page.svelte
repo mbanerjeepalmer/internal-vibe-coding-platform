@@ -26,9 +26,17 @@
 		</div>
 		<div class="flex items-center gap-4">
 			<div class="text-right">
-				<p class="text-sm font-medium text-stone-900">{data.user.name || data.user.email}</p>
+				<a href={`/users/${data.user.id}`} class="text-sm font-medium text-stone-900 hover:underline">
+					{data.user.name || data.user.email}
+				</a>
 				<p class="text-xs text-stone-500">{data.role === 'owner' ? 'Organisation owner' : 'Member'}</p>
 			</div>
+			<a
+				href="/account"
+				class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
+			>
+				Account settings
+			</a>
 			<button
 				type="button"
 				onclick={signOut}
@@ -96,7 +104,12 @@
 						<li class="rounded-lg border border-stone-200 bg-white p-4">
 							<div class="flex items-center justify-between">
 								<div>
-									<p class="text-sm font-semibold text-stone-900">{kitchen.name}</p>
+									<a
+										href={`/kitchens/${kitchen.id}`}
+										class="text-sm font-semibold text-stone-900 hover:underline"
+									>
+										{kitchen.name}
+									</a>
 									<p class="text-xs text-stone-500">
 										{kitchen.headChefName ? `Head Chef: ${kitchen.headChefName} · ` : ''}
 										{kitchen.memberCount}

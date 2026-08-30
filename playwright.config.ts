@@ -13,7 +13,14 @@ export default defineConfig({
 			args: ['--no-sandbox']
 		}
 	},
-	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+	projects: [
+		{ name: 'setup', testMatch: /.*\.setup\.ts/ },
+		{
+			name: 'chromium',
+			use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/dev-chef.json' },
+			dependencies: ['setup']
+		}
+	],
 	webServer: {
 		command: 'npm run preview',
 		url: 'http://localhost:4173',
