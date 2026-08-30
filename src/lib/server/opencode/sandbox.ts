@@ -42,6 +42,12 @@ export interface AppStorage {
 
 export interface SandboxProvider {
 	getOrCreateSandbox(projectId: string): Promise<Sandbox>;
+	/**
+	 * Reports whether a project's sandbox is actually awake right now, without
+	 * provisioning or starting one — so the Kitchens list can show accurate
+	 * status without waking every sandbox just to render the page.
+	 */
+	isSandboxAwake(projectId: string): Promise<boolean>;
 	/** Resolves an arbitrary port inside a project's sandbox to a reachable URL. Sandbox must already exist. */
 	getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget>;
 	/** Tears the project's sandbox down entirely (the "hard delete this app" flow in docs/01_hardcoded_demo.md). */
@@ -268,6 +274,10 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		return { url: `http://127.0.0.1:${port}` };
 	}
 
+	async isSandboxAwake(projectId: string): Promise<boolean> {
+		return this.children.has(projectId);
+	}
+
 	async destroySandbox(projectId: string): Promise<void> {
 		this.children.get(projectId)?.kill();
 		this.children.delete(projectId);
@@ -470,6 +480,18 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		}
 		this.sandboxes.delete(projectId);
 		this.raw.delete(projectId);
+	}
+
+	// Looks the sandbox up by label and reads Daytona's own `state` field —
+	// deliberately never calls `daytona.start`, since this is used to render
+	// the Kitchens list and must not wake a sandbox just to show its status.
+	async isSandboxAwake(projectId: string): Promise<boolean> {
+		const daytona = await this.client();
+		const label = { 'vibe-project': projectId };
+		for await (const candidate of daytona.list({ labels: label })) {
+			return candidate.state === 'started';
+		}
+		return false;
 	}
 
 	private async provision(projectId: string): Promise<Sandbox> {
