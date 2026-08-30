@@ -12,7 +12,7 @@ We'll try to build it to be platform-agnostic. But here's the journey we'll want
   - Open question: how do we handle code version control? I'm thinking one branch per project perhaps with a naming convention to indicate staging/prod per-project. (Alternative is a a monorepo or maybe an organisation.)
 - The agent asks two sensible clarifying questions and then goes and builds the web application.
   - It asks for Google Maps API creds, which we paste in.
-  - We can see that it's done Red/Green TDD and pyramid testing using Puppeteer. It asks if we want to deploy to Cloudflare.
+  - We can see that it's done Red/Green TDD and pyramid testing using Playwright. It asks if we want to deploy to Cloudflare.
 - We test it out within another pane (which works well on mobile) and a dev server URL. We give a bit more feedback to add an emoji feature.
 - We use the 'Deploy to Cloudflare' button. We visit the application at `https://maps-alternative.vibe.kitchen`, for some reason it crashes. (Maybe because it's on the Cloudflare worker a certain type of dependency breaks?)
 - We go back to the vibe coding platform. We follow the links out to PostHog and Sentry. Within the project, we fix the problem.
@@ -24,4 +24,4 @@ We'll try to build it to be platform-agnostic. But here's the journey we'll want
 
 ## Tech notes
 - Build this parent as a SvelteKit project, using Tailwind.
-- Red/Green TDD and pyramid testing with Puppeteer.
+- Red/Green TDD and pyramid testing with Playwright.
