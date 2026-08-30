@@ -114,6 +114,7 @@ interface DaytonaProcess {
 }
 
 async function getOrCreateSandbox(env: Env): Promise<DaytonaSandboxHandle> {
+	patchFetchForWorkersCacheBug();
 	const { Daytona } = await import('@daytona/sdk');
 	const daytona = new Daytona({ apiKey: env.DAYTONA_API_KEY });
 
@@ -136,6 +137,34 @@ async function ensureFiles(sandbox: { process: DaytonaProcess }) {
 	if (result.exitCode !== 0) {
 		throw new Error(`writing counter app files into the Daytona sandbox failed:\n${result.result}`);
 	}
+}
+
+let fetchPatched = false;
+
+/**
+ * `@daytona/sdk` talks to Daytona's API through axios, whose fetch adapter
+ * hardcodes `cache: 'default'` on a `Request` object it constructs itself,
+ * which Cloudflare Workers' fetch rejects outright ("Unsupported cache mode:
+ * default") -- only visible once actually deployed, not in local `vite dev`
+ * (which runs on plain Node). Same fix already verified live in the
+ * opencode-wiring worktree's src/lib/server/opencode/sandbox.ts. Harmless on
+ * Node, required on Workers.
+ */
+function patchFetchForWorkersCacheBug() {
+	if (fetchPatched) return;
+	fetchPatched = true;
+	const OriginalRequest = globalThis.Request;
+	if (!OriginalRequest) return;
+	globalThis.Request = new Proxy(OriginalRequest, {
+		construct(target, args: [RequestInfo | URL, RequestInit?]) {
+			const [input, init] = args;
+			if (init && typeof init === 'object' && 'cache' in init) {
+				const { cache: _cache, ...rest } = init;
+				return new target(input, rest);
+			}
+			return new target(input, init);
+		}
+	});
 }
 
 function cfCreds(env: Env) {
