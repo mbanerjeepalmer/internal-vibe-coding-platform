@@ -35,6 +35,11 @@ export interface CloudflareCredentials extends Record<string, string> {
 	CLOUDFLARE_ACCOUNT_ID: string;
 }
 
+export interface AppStorage {
+	databaseId: string;
+	databaseName: string;
+}
+
 export interface SandboxProvider {
 	getOrCreateSandbox(projectId: string): Promise<Sandbox>;
 	/** Resolves an arbitrary port inside a project's sandbox to a reachable URL. Sandbox must already exist. */
@@ -42,14 +47,14 @@ export interface SandboxProvider {
 	/** Tears the project's sandbox down entirely (the "hard delete this app" flow in docs/01_hardcoded_demo.md). */
 	destroySandbox(projectId: string): Promise<void>;
 	/** Runs `wrangler deploy` against whatever the agent has written in the project's working directory. */
-	deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
+	deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult>;
 	/**
 	 * Runs `wrangler delete` in the project's working directory, tearing down
 	 * only the worker named in that directory's own `wrangler.jsonc` — since
 	 * the name comes from a file the caller never gets to specify, this can
 	 * never be pointed at an arbitrary worker outside the project.
 	 */
-	undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
+	undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult>;
 }
 
 // The version we traced opencode's v2 API against (docs/03_opencode_backend_spec.md's
@@ -97,11 +102,69 @@ function starterFiles(projectId: string): Record<string, string> {
 	const workerName = `vibe-${projectId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 	return {
 		'wrangler.jsonc': JSON.stringify(
-			{ name: workerName, main: 'index.js', compatibility_date: '2026-08-30' },
+			{
+				name: workerName,
+				main: 'index.js',
+				compatibility_date: '2026-08-30',
+				d1_databases: [
+					{
+						binding: 'DB',
+						database_name: `vibe-app-${projectId}`,
+						database_id: '__VIBE_APP_D1_DATABASE_ID__',
+						migrations_dir: 'migrations'
+					}
+				]
+			},
 			null,
 			2
 		),
 		'index.js': `export default {\n\tasync fetch(request) {\n\t\treturn new Response('Hello from ${workerName}! Ask the agent to build something.');\n\t}\n};\n`,
+		'migrations/.gitkeep': '',
+		'.opencode/skills/vibe-app-storage/SKILL.md': `---
+name: vibe-app-storage
+description: Manage this Vibe app's database and persistent storage. Use for D1, SQL, schema, tables, migrations, durable data, storage, persistence, backup, restore, relink, orphaned databases, or database deletion.
+metadata:
+  keywords: database, storage, d1, sql, schema, migration, persistence, backup, restore, delete
+---
+
+# Vibe app storage
+
+This App has one isolated Cloudflare D1 database, exposed to the Worker as
+\`env.DB\`. It is persistent across deploys and sandbox destruction. This is
+not the Vibe Kitchen control-plane database.
+
+## Schema changes
+
+Treat SQL migration files as the source of truth. For every schema change,
+add one immutable, ordered file such as \`migrations/0001_create_tasks.sql\`.
+Never edit a migration that may already have been deployed; create the next
+numbered migration instead. Use transactions where a migration needs multiple
+dependent statements, and make application queries parameterized with
+\`env.DB.prepare(...).bind(...)\`.
+
+## Tools and deploy
+
+You can validate migrations locally with:
+
+\`npx wrangler d1 migrations apply DB --local\`
+
+and inspect local data with:
+
+\`npx wrangler d1 execute DB --local --command "SELECT name FROM sqlite_master WHERE type = 'table'"\`
+
+The platform owns remote credentials. Do not run remote D1 commands, create a
+new D1 database, or replace the \`DB\` binding. When the user chooses Deploy,
+the platform first applies every unapplied \`migrations/*.sql\` file to this
+App's linked remote database, then deploys the Worker. A failed migration stops
+the deploy and its error is shown in the deploy result.
+
+## Recovery and destructive actions
+
+The Head Chef can unlink a database (preserving its data), relink an orphaned
+Vibe database, or permanently delete it from the app's Storage controls. Do
+not attempt any of these from the sandbox. Before asking for a permanent delete,
+make clear that it erases the remote database and cannot be restored here.
+`,
 		'AGENTS.md': `# Deploying this app
 
 This directory is a Cloudflare Workers project. "Deploy" (a button in the
@@ -137,6 +200,18 @@ means:
 - **This is the Workers runtime, not Node.js.** Avoid Node-only built-ins
   (\`fs\`, \`path\`, etc.) unless you add \`"compatibility_flags": ["nodejs_compat"]\`
   to \`wrangler.jsonc\`.
+- **Persistent storage is ready for this App as \`env.DB\`.** It is this App's
+  own isolated Cloudflare D1 database, not the platform control-plane database.
+  Use prepared statements (for example \`env.DB.prepare('SELECT ...').bind(...).run()\`).
+  Put durable schema changes in ordered \`migrations/0001_description.sql\` files.
+  The platform applies those migrations to this App's database before every
+  Deploy. Keep the \`DB\` binding and the \`__VIBE_APP_D1_DATABASE_ID__\`
+  placeholder in \`wrangler.jsonc\`; the platform substitutes the real ID only
+  for its authorised deploy command. Do not create another database, put a
+  database ID in source, or try to use the platform's own \`DB\`.
+- The project-local \`vibe-app-storage\` skill is automatically available for
+  database, storage, D1, SQL, schema, migration, persistence, backup, restore,
+  relink, and deletion requests. Load it before changing persistent data.
 
 After making a change, re-read \`index.js\`/\`wrangler.jsonc\` and confirm the
 thing you just built is actually reachable from the Worker's \`fetch\` handler
@@ -200,18 +275,19 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		this.cwds.delete(projectId);
 	}
 
-	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, ['deploy']);
+	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['deploy'], storage);
 	}
 
-	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, ['delete', '--force']);
+	async undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['delete', '--force'], storage);
 	}
 
 	private async runWrangler(
 		projectId: string,
 		creds: CloudflareCredentials,
-		args: string[]
+		args: string[],
+		storage?: AppStorage
 	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const cwd = this.cwds.get(projectId);
@@ -222,9 +298,17 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		const run = promisify(execFile);
 
 		try {
+			const config = storage ? '.wrangler.vibe.jsonc' : 'wrangler.jsonc';
+			if (storage) {
+				const fs = await import('node:fs/promises');
+				const source = await fs.readFile(`${cwd}/wrangler.jsonc`, 'utf8');
+				await fs.writeFile(`${cwd}/${config}`, source.replaceAll('__VIBE_APP_D1_DATABASE_ID__', storage.databaseId));
+			}
+			const migrationArgs = storage ? ['--yes', `wrangler@${WRANGLER_VERSION}`, 'd1', 'migrations', 'apply', 'DB', '--remote', '--config', config] : null;
+			if (migrationArgs) await run('npx', migrationArgs, { cwd, env: { ...process.env, ...creds }, timeout: 120_000 });
 			const { stdout, stderr } = await run(
 				'npx',
-				['--yes', `wrangler@${WRANGLER_VERSION}`, ...args],
+				['--yes', `wrangler@${WRANGLER_VERSION}`, ...args, '--config', config],
 				{ cwd, env: { ...process.env, ...creds }, timeout: 120_000 }
 			);
 			const log = `${stdout}\n${stderr}`;
@@ -250,7 +334,13 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 
 		for (const [name, contents] of Object.entries(starterFiles(projectId))) {
 			const filePath = path.join(cwd, name);
+			await fs.mkdir(path.dirname(filePath), { recursive: true });
 			await fs.access(filePath).catch(() => fs.writeFile(filePath, contents));
+		}
+		const agentsPath = path.join(cwd, 'AGENTS.md');
+		const agents = await fs.readFile(agentsPath, 'utf8');
+		if (!agents.includes('vibe-app-storage')) {
+			await fs.appendFile(agentsPath, '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the `vibe-app-storage` skill.\n');
 		}
 
 		const baseUrl = await new Promise<string>((resolve, reject) => {
@@ -419,25 +509,30 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return { projectId, baseUrl: preview.url, headers };
 	}
 
-	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, 'deploy');
+	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'deploy', storage);
 	}
 
-	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
-		return this.runWrangler(projectId, creds, 'delete --force');
+	async undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'delete --force', storage);
 	}
 
 	private async runWrangler(
 		projectId: string,
 		creds: CloudflareCredentials,
-		args: string
+		args: string,
+		storage?: AppStorage
 	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const daytonaSandbox = this.raw.get(projectId);
 		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
 
+		const config = storage ? '.wrangler.vibe.jsonc' : 'wrangler.jsonc';
+		const prepare = storage
+			? `sed 's/__VIBE_APP_D1_DATABASE_ID__/${storage.databaseId}/g' wrangler.jsonc > ${config} && npx --yes wrangler@${WRANGLER_VERSION} d1 migrations apply DB --remote --config ${config} && `
+			: '';
 		const result = await daytonaSandbox.process.executeCommand(
-			`cd ${PROJECT_DIR} && npx --yes wrangler@${WRANGLER_VERSION} ${args}`,
+			`cd ${PROJECT_DIR} && ${prepare}npx --yes wrangler@${WRANGLER_VERSION} ${args} --config ${config}`,
 			undefined,
 			creds,
 			120
@@ -454,13 +549,22 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		const check = await daytonaSandbox.process.executeCommand(
 			`test -f ${PROJECT_DIR}/wrangler.jsonc && echo present`
 		);
-		if (check.result?.includes('present')) return;
-
 		const files = starterFiles(projectId);
+		if (check.result?.includes('present')) {
+			const storageGuide = files['.opencode/skills/vibe-app-storage/SKILL.md'].replace(/'/g, `'\\''`);
+			const result = await daytonaSandbox.process.executeCommand(
+				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md`
+			);
+			if (result.exitCode !== 0) throw new Error(`adding storage guidance to the Daytona sandbox failed:\n${result.result}`);
+			return;
+		}
+
 		const writes = Object.entries(files)
 			.map(([name, contents]) => `printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ${PROJECT_DIR}/${name}`)
 			.join(' && ');
-		const result = await daytonaSandbox.process.executeCommand(`mkdir -p ${PROJECT_DIR} && ${writes}`);
+		const result = await daytonaSandbox.process.executeCommand(
+			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage && ${writes}`
+		);
 		if (result.exitCode !== 0) {
 			throw new Error(`seeding the starter project into the Daytona sandbox failed:\n${result.result}`);
 		}

@@ -188,6 +188,27 @@ export async function markSandboxActive(db: D1Database, appId: string, opencodeS
 		.run();
 }
 
+/**
+ * Claims an OpenCode session as the App's shared conversation.  The conditional
+ * update makes concurrent first visits converge on one session: a losing
+ * request may have created an unused OpenCode session, but it cannot replace
+ * the conversation the other chef is already using.
+ */
+export async function claimSharedOpencodeSession(
+	db: D1Database,
+	appId: string,
+	opencodeSessionId: string
+) {
+	const result = await db
+		.prepare(
+			`UPDATE apps SET sandbox_id = ?, opencode_session_id = ?, sandbox_state = 'running', updated_at = ?
+			 WHERE id = ? AND opencode_session_id IS NULL`
+		)
+		.bind(appId, opencodeSessionId, now(), appId)
+		.run();
+	return result.meta.changes === 1;
+}
+
 export async function markSandboxDestroyed(db: D1Database, appId: string) {
 	await db
 		.prepare(

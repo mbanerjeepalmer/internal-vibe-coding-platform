@@ -15,6 +15,9 @@
 	let pendingFiles = $state<PromptFile[]>([]);
 	let fileInput: HTMLInputElement;
 	let destroying = $state(false);
+	let storage = $state<{ linked: { databaseId: string; databaseName: string } | null; orphans: Array<{ databaseId: string; databaseName: string }> } | null>(null);
+	let storageBusy = $state(false);
+	let storageError = $state<string | null>(null);
 
 	let panelTab = $state<'timeline' | 'preview'>('timeline');
 	let previewPort = $state('5173');
@@ -40,6 +43,45 @@
 		if (tool.includes('write') || tool.includes('edit')) return '📝';
 		if (tool.includes('bash') || tool.includes('shell')) return '💻';
 		return '⚙️';
+	}
+
+	async function loadStorage() {
+		if (data.app.role !== 'head_chef') return;
+		storageBusy = true;
+		storageError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/storage`);
+			if (!response.ok) throw new Error(await response.text());
+			storage = await response.json();
+		} catch (err) {
+			storageError = err instanceof Error ? err.message : String(err);
+		} finally {
+			storageBusy = false;
+		}
+	}
+
+	async function storageAction(action: 'unlink' | 'destroy' | 'relink', databaseId?: string) {
+		const linked = storage?.linked;
+		const confirmation = action === 'destroy' && linked
+			? prompt(`This permanently deletes all data. Type DELETE ${linked.databaseName} to continue:`)
+			: action === 'unlink' && linked
+				? prompt(`This keeps the database and makes it available to relink. Type ${linked.databaseName} to continue:`)
+				: '';
+		if (confirmation === null) return;
+		storageBusy = true;
+		storageError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/storage`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ action, databaseId, confirmation })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			await loadStorage();
+		} catch (err) {
+			storageError = err instanceof Error ? err.message : String(err);
+			storageBusy = false;
+		}
 	}
 
 	// Attachments go to opencode as a multimodal content part sent straight to
@@ -136,6 +178,35 @@
 			{/if}
 
 			<div class="mt-auto space-y-2 pt-4">
+				{#if data.app.role === 'head_chef'}
+					<button
+						type="button"
+						onclick={loadStorage}
+						disabled={storageBusy}
+						class="w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+					>
+						🗄️ {storage ? 'Refresh storage' : 'Manage storage'}
+					</button>
+					{#if storage}
+						<div class="space-y-1 rounded-md border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
+							{#if storage.linked}
+								<p class="break-all font-medium">Linked: {storage.linked.databaseName}</p>
+								<button type="button" onclick={() => storageAction('unlink')} disabled={storageBusy} class="mr-2 text-amber-700 underline">Unlink (keep data)</button>
+								<button type="button" onclick={() => storageAction('destroy')} disabled={storageBusy} class="text-red-700 underline">Permanently delete</button>
+							{:else}
+								<p>No database linked. Deploy creates a new one.</p>
+							{/if}
+							{#if storage.orphans.length}
+								<p class="mt-2 font-medium">Unlinked Vibe databases</p>
+								{#each storage.orphans as orphan (orphan.databaseId)}
+									<div class="flex items-center justify-between gap-1"><span class="truncate">{orphan.databaseName}</span><button type="button" onclick={() => storageAction('relink', orphan.databaseId)} disabled={storageBusy || !!storage.linked} class="text-blue-700 underline">Relink</button></div>
+								{/each}
+							{/if}
+						</div>
+					{/if}
+					{#if storageError}<p class="text-[11px] text-red-600">{storageError}</p>{/if}
+				{/if}
+
 				<button
 					type="button"
 					data-testid="deploy-project"

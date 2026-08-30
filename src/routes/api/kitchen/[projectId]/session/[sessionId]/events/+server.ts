@@ -1,14 +1,14 @@
 import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 import { eventStreamRequest } from '$lib/server/opencode/client';
-import { requireAppAccess } from '$lib/server/authz';
+import { requireActiveAppSession } from '$lib/server/authz';
 
 // Proxies opencode's durable per-session SSE stream as a same-origin SSE stream.
 // The browser reconnects with `?after=<last_seen_seq>` (see reducer.ts on the
 // client) so a dropped connection never loses or duplicates events — this is
 // opencode's server doing the replay, we're just re-emitting its bytes.
 export const GET: RequestHandler = async (event) => {
-	const { app } = await requireAppAccess(event);
+	const { app } = await requireActiveAppSession(event);
 	const { params, url, fetch } = event;
 	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id);
 	const after = url.searchParams.get('after') ?? undefined;
