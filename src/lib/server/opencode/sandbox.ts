@@ -43,6 +43,13 @@ export interface SandboxProvider {
 	destroySandbox(projectId: string): Promise<void>;
 	/** Runs `wrangler deploy` against whatever the agent has written in the project's working directory. */
 	deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
+	/**
+	 * Runs `wrangler delete` in the project's working directory, tearing down
+	 * only the worker named in that directory's own `wrangler.jsonc` — since
+	 * the name comes from a file the caller never gets to specify, this can
+	 * never be pointed at an arbitrary worker outside the project.
+	 */
+	undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
 }
 
 // The version we traced opencode's v2 API against (docs/03_opencode_backend_spec.md's
@@ -99,6 +106,18 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 	}
 
 	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['deploy']);
+	}
+
+	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['delete', '--force']);
+	}
+
+	private async runWrangler(
+		projectId: string,
+		creds: CloudflareCredentials,
+		args: string[]
+	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const cwd = this.cwds.get(projectId);
 		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
@@ -110,7 +129,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		try {
 			const { stdout, stderr } = await run(
 				'npx',
-				['--yes', `wrangler@${WRANGLER_VERSION}`, 'deploy'],
+				['--yes', `wrangler@${WRANGLER_VERSION}`, ...args],
 				{ cwd, env: { ...process.env, ...creds }, timeout: 120_000 }
 			);
 			const log = `${stdout}\n${stderr}`;
@@ -289,12 +308,24 @@ class DaytonaSandboxProvider implements SandboxProvider {
 	}
 
 	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'deploy');
+	}
+
+	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'delete --force');
+	}
+
+	private async runWrangler(
+		projectId: string,
+		creds: CloudflareCredentials,
+		args: string
+	): Promise<DeployResult> {
 		await this.getOrCreateSandbox(projectId);
 		const daytonaSandbox = this.raw.get(projectId);
 		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
 
 		const result = await daytonaSandbox.process.executeCommand(
-			`cd ${PROJECT_DIR} && npx --yes wrangler@${WRANGLER_VERSION} deploy`,
+			`cd ${PROJECT_DIR} && npx --yes wrangler@${WRANGLER_VERSION} ${args}`,
 			undefined,
 			creds,
 			120

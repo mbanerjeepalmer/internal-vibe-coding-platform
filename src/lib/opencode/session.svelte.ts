@@ -50,7 +50,10 @@ export class OpencodeSession {
 	pendingPermissions = $state<PermissionRequest[]>([]);
 	destroyed = $state(false);
 	deploying = $state(false);
-	deployResult = $state<{ success: boolean; log: string; url?: string } | null>(null);
+	deployed = $state(false);
+	deployResult = $state<{ action: 'deploy' | 'undeploy'; success: boolean; log: string; url?: string } | null>(
+		null
+	);
 
 	sessionId: string | null = null;
 	private itemIndex = new Map<string, number>();
@@ -108,13 +111,30 @@ export class OpencodeSession {
 	}
 
 	async deploy() {
+		await this.runDeployAction('deploy');
+	}
+
+	/** Tears down the worker this project deployed (not the sandbox itself — see `destroySandbox`). */
+	async undeploy() {
+		await this.runDeployAction('undeploy');
+	}
+
+	private async runDeployAction(action: 'deploy' | 'undeploy') {
 		this.deploying = true;
 		this.deployResult = null;
 		try {
-			const res = await fetch(`/api/kitchen/${this.projectId}/deploy`, { method: 'POST' });
-			this.deployResult = (await res.json()) as { success: boolean; log: string; url?: string };
+			const res = await fetch(`/api/kitchen/${this.projectId}/deploy`, {
+				method: action === 'deploy' ? 'POST' : 'DELETE'
+			});
+			const body = (await res.json()) as { success: boolean; log: string; url?: string };
+			this.deployResult = { action, ...body };
+			if (body.success) this.deployed = action === 'deploy';
 		} catch (err) {
-			this.deployResult = { success: false, log: err instanceof Error ? err.message : String(err) };
+			this.deployResult = {
+				action,
+				success: false,
+				log: err instanceof Error ? err.message : String(err)
+			};
 		} finally {
 			this.deploying = false;
 		}

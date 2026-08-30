@@ -2,21 +2,39 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 
+function cfCreds(platform: App.Platform | undefined) {
+	const env = platform?.env;
+	if (!env?.CLOUDFLARE_API_TOKEN || !env?.CLOUDFLARE_ACCOUNT_ID) return null;
+	return { CLOUDFLARE_API_TOKEN: env.CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID: env.CLOUDFLARE_ACCOUNT_ID };
+}
+
 // Runs `wrangler deploy` against whatever the agent has written in the
 // project's sandbox — the "tighter end to end" flow from
 // docs/04_tighter_end_to_end.md: chat with opencode, then deploy what it wrote.
 export const POST: RequestHandler = async ({ params, platform }) => {
-	const cfEnv = platform?.env;
-	if (!cfEnv?.CLOUDFLARE_API_TOKEN || !cfEnv?.CLOUDFLARE_ACCOUNT_ID) {
+	const creds = cfCreds(platform);
+	if (!creds) {
 		return json(
 			{ success: false, log: 'Missing CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID.' },
 			{ status: 500 }
 		);
 	}
+	const result = await getSandboxProvider().deployProject(params.projectId, creds);
+	return json(result);
+};
 
-	const result = await getSandboxProvider().deployProject(params.projectId, {
-		CLOUDFLARE_API_TOKEN: cfEnv.CLOUDFLARE_API_TOKEN,
-		CLOUDFLARE_ACCOUNT_ID: cfEnv.CLOUDFLARE_ACCOUNT_ID
-	});
+// Tears down the worker this project deployed — scoped by construction, since
+// `wrangler delete` reads the worker name out of the project's own
+// wrangler.jsonc rather than taking one from the request, so this endpoint
+// can never be used to delete a worker outside the caller's own project.
+export const DELETE: RequestHandler = async ({ params, platform }) => {
+	const creds = cfCreds(platform);
+	if (!creds) {
+		return json(
+			{ success: false, log: 'Missing CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID.' },
+			{ status: 500 }
+		);
+	}
+	const result = await getSandboxProvider().undeployProject(params.projectId, creds);
 	return json(result);
 };
