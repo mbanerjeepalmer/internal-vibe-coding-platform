@@ -7,6 +7,7 @@ import {
 	listKitchenMembers,
 	setKitchenAgentGuidance
 } from '$lib/server/control-plane';
+import { reconcileSandboxStates } from '$lib/server/opencode/sandbox';
 
 const MAX_GUIDANCE_LENGTH = 12_000;
 
@@ -26,6 +27,7 @@ export const load: PageServerLoad = async ({ params, locals, platform, url }) =>
 		listApps(database, locals.user.id, kitchen.id),
 		listKitchenMembers(database, kitchen.id)
 	]);
+	await reconcileSandboxStates(apps);
 
 	return { kitchen, apps, members, user: locals.user };
 };

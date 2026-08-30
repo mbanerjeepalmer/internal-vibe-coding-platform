@@ -810,3 +810,23 @@ export function getSandboxProvider(): SandboxProvider {
 	}
 	return provider;
 }
+
+// `apps.sandbox_state` in D1 only means "a sandbox was provisioned at some
+// point" — it never gets flipped back when the underlying sandbox goes idle.
+// Cross-check every app the DB claims is running against the sandbox
+// provider's own state (without waking anything) and relabel it sleeping if
+// it isn't actually awake. Mutates each app in place; every page that renders
+// `sandboxState` (the Kitchens dashboard, a Kitchen's app list, a user's
+// profile) must call this or it'll show stale "running" apps forever.
+export async function reconcileSandboxStates<T extends { id: string; sandboxState: string }>(
+	apps: T[]
+): Promise<void> {
+	const sandboxProvider = getSandboxProvider();
+	await Promise.all(
+		apps.map(async (app) => {
+			if (app.sandboxState !== 'running') return;
+			const awake = await sandboxProvider.isSandboxAwake(app.id).catch(() => true);
+			if (!awake) app.sandboxState = 'sleeping';
+		})
+	);
+}

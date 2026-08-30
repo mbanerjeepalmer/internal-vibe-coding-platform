@@ -1,3 +1,5 @@
+import { reconcileSandboxStates } from './opencode/sandbox';
+
 export type UserIdentity = { id: string; name: string; email: string };
 export type KitchenRole = 'head_chef' | 'chef';
 export type OrganisationRole = 'owner' | 'member';
@@ -467,6 +469,7 @@ export async function getUserProfile(db: D1Database, viewerId: string, targetUse
 		const apps = await listApps(db, viewerId, kitchen.id);
 		kitchens.push({ id: kitchen.id, name: kitchen.name, apps });
 	}
+	await reconcileSandboxStates(kitchens.flatMap((k) => k.apps));
 
 	return { user: target, kitchens };
 }
