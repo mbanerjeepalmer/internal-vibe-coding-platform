@@ -18,6 +18,15 @@
 	let storage = $state<{ linked: { databaseId: string; databaseName: string } | null; orphans: Array<{ databaseId: string; databaseName: string }> } | null>(null);
 	let storageBusy = $state(false);
 	let storageError = $state<string | null>(null);
+	let secrets = $state<{ kitchen: Array<{ name: string }>; appSecrets: Array<{ name: string; overridesKitchenSecret?: boolean }> } | null>(null);
+	let secretsBusy = $state(false);
+	let secretsError = $state<string | null>(null);
+	let secretName = $state('');
+	let secretValue = $state('');
+	let secretScope = $state<'app' | 'kitchen'>('app');
+	let requestedSecretValue = $state<Record<string, string>>({});
+	let requestedSecretBusy = $state<string | null>(null);
+	let requestedSecretError = $state<Record<string, string>>({});
 
 	let panelTab = $state<'timeline' | 'preview'>('timeline');
 	let previewPort = $state('5173');
@@ -133,6 +142,66 @@
 		});
 		if (!response.ok) appName = previous;
 	}
+
+	async function loadSecrets() {
+		secretsBusy = true;
+		secretsError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/secrets`);
+			if (!response.ok) throw new Error(await response.text());
+			secrets = await response.json();
+		} catch (err) {
+			secretsError = err instanceof Error ? err.message : String(err);
+		} finally { secretsBusy = false; }
+	}
+
+	async function saveSecret() {
+		secretsBusy = true;
+		secretsError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/secrets`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ scope: secretScope, name: secretName.trim(), value: secretValue })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			secretName = ''; secretValue = '';
+			await loadSecrets();
+		} catch (err) { secretsError = err instanceof Error ? err.message : String(err); secretsBusy = false; }
+	}
+
+	async function removeSecret(scope: 'app' | 'kitchen', name: string) {
+		if (!confirm(`Delete ${name}? New runs will no longer receive it.`)) return;
+		secretsBusy = true;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/secrets`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope, name }) });
+			if (!response.ok) throw new Error(await response.text());
+			await loadSecrets();
+		} catch (err) { secretsError = err instanceof Error ? err.message : String(err); secretsBusy = false; }
+	}
+
+	function secretRequest(item: { input: Record<string, unknown> }) {
+		const name = typeof item.input.name === 'string' ? item.input.name : '';
+		const reason = typeof item.input.reason === 'string' ? item.input.reason : '';
+		return { name, reason, valid: /^[A-Z][A-Z0-9_]{0,127}$/.test(name) };
+	}
+
+	async function fulfilSecretRequest(itemId: string, name: string) {
+		const value = requestedSecretValue[itemId] ?? '';
+		if (!value) return;
+		requestedSecretBusy = itemId;
+		requestedSecretError = { ...requestedSecretError, [itemId]: '' };
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/secrets`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ scope: 'app', name, value })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			requestedSecretValue = { ...requestedSecretValue, [itemId]: '' };
+			await session.sendPrompt(`The user securely added ${name}. It will be available to new runs and deploys by that environment-variable name; never ask for or print its value.`);
+		} catch (err) {
+			requestedSecretError = { ...requestedSecretError, [itemId]: err instanceof Error ? err.message : String(err) };
+		} finally { requestedSecretBusy = null; }
+	}
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
@@ -147,7 +216,7 @@
 	/>
 
 	<div class="flex flex-1 overflow-hidden">
-		<aside class="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60 p-3 md:flex">
+		<aside class="hidden w-56 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3 md:flex">
 			<p class="mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
 				App
 			</p>
@@ -196,7 +265,36 @@
 				<p class="text-shimmer px-2 text-xs text-slate-400">Waking up sandbox…</p>
 			{/if}
 
-			<div class="mt-auto space-y-2 pt-4">
+			<div class="mt-2 space-y-2 pt-2">
+				<button
+					type="button"
+					onclick={loadSecrets}
+					disabled={secretsBusy}
+					class="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+				>
+					🔐 App secrets
+					<span class="mt-0.5 block font-normal text-slate-500">Add or rotate this App’s credentials</span>
+				</button>
+				{#if secrets}
+					<div class="space-y-2 rounded-md border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
+						<p>Values are write-only and never shown again.</p>
+						<div class="space-y-1">
+							<p class="font-medium">App secrets</p>
+							{#each secrets.appSecrets as secret (secret.name)}
+								<div class="flex justify-between gap-1"><span class="truncate">{secret.name}{secret.overridesKitchenSecret ? ' (overrides Kitchen)' : ''}</span><button type="button" onclick={() => removeSecret('app', secret.name)} class="text-red-700 underline">Delete</button></div>
+							{/each}
+							{#if !secrets.appSecrets.length}<p>None yet.</p>{/if}
+						</div>
+						<div class="space-y-1"><p class="font-medium">Kitchen secrets inherited by this App</p>{#each secrets.kitchen as secret (secret.name)}<div class="flex justify-between gap-1"><span class="truncate">{secret.name}</span>{#if data.app.role === 'head_chef'}<button type="button" onclick={() => removeSecret('kitchen', secret.name)} class="text-red-700 underline">Delete</button>{/if}</div>{/each}{#if !secrets.kitchen.length}<p>None yet.</p>{/if}</div>
+						<form class="space-y-1" onsubmit={(event) => { event.preventDefault(); saveSecret(); }}>
+							{#if data.app.role === 'head_chef'}<select bind:value={secretScope} class="w-full rounded border border-slate-200 px-1 py-1"><option value="app">This App</option><option value="kitchen">Kitchen (shared)</option></select>{/if}
+							<input bind:value={secretName} placeholder="GOOGLE_MAPS_API_KEY" class="w-full rounded border border-slate-200 px-1 py-1" />
+							<input bind:value={secretValue} type="password" autocomplete="off" placeholder="Paste value (write-only)" class="w-full rounded border border-slate-200 px-1 py-1" />
+							<button disabled={secretsBusy} class="w-full rounded bg-slate-800 px-2 py-1 text-white">Save {secretScope === 'kitchen' ? 'Kitchen' : 'App'} secret</button>
+						</form>
+					</div>
+				{/if}
+				{#if secretsError}<p class="text-[11px] text-red-600">{secretsError}</p>{/if}
 				{#if data.app.role === 'head_chef'}
 					<button
 						type="button"
@@ -346,7 +444,20 @@
 							{/if}
 						</ChatMessage>
 					{:else if item.kind === 'tool'}
-						<ToolCall
+						{#if item.tool === 'request_secret' && secretRequest(item).valid}
+							{@const request = secretRequest(item)}
+							<div class="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm" data-testid="secret-request">
+								<p class="font-medium text-blue-950">The agent needs {request.name}</p>
+								{#if request.reason}<p class="mt-1 text-xs text-blue-800">{request.reason}</p>{/if}
+								<form class="mt-3 space-y-2" onsubmit={(event) => { event.preventDefault(); fulfilSecretRequest(item.id, request.name); }}>
+									<input bind:value={requestedSecretValue[item.id]} type="password" autocomplete="off" placeholder="Paste value securely" class="w-full rounded border border-blue-200 bg-white px-2 py-1.5 text-xs" />
+									<button disabled={requestedSecretBusy === item.id} class="rounded bg-blue-700 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50">{requestedSecretBusy === item.id ? 'Saving…' : `Add ${request.name}`}</button>
+								</form>
+								<p class="mt-2 text-[11px] text-blue-700">Write-only: the value is never shown to the agent or returned here.</p>
+								{#if requestedSecretError[item.id]}<p class="mt-1 text-xs text-red-600">{requestedSecretError[item.id]}</p>{/if}
+							</div>
+						{:else}
+							<ToolCall
 							icon={toolIcon(item.tool)}
 							status={item.status}
 							activeLabel={`Running ${item.tool}`}
@@ -359,6 +470,7 @@
 								{/if}
 							{/snippet}
 						</ToolCall>
+						{/if}
 					{:else if item.kind === 'error'}
 						<ChatMessage role="agent">
 							<p class="text-red-600">⚠️ {item.message}</p>

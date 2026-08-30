@@ -14,6 +14,8 @@ declare global {
 		DAYTONA_API_KEY: string;
 		CLOUDFLARE_API_TOKEN: string;
 		CLOUDFLARE_ACCOUNT_ID: string;
+		/** Independent AES-GCM key material for control-plane secret ciphertext. */
+		SECRET_ENCRYPTION_KEY?: string;
 	}
 
 	namespace App {
