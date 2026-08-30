@@ -395,6 +395,7 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 		.prepare(
 			`SELECT a.id, a.name, a.kitchen_id AS kitchenId, k.name AS kitchenName, a.git_branch AS gitBranch,
 			 a.sandbox_id AS sandboxId, a.opencode_session_id AS opencodeSessionId,
+			 k.agent_guidance AS agentGuidance,
 			 k.default_model_id AS defaultModelId, k.default_model_provider_id AS defaultModelProviderId,
 			 CASE WHEN om.role = 'owner' THEN 'head_chef' ELSE km.role END AS role
 			 FROM apps a JOIN kitchens k ON k.id = a.kitchen_id
@@ -411,10 +412,27 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 			gitBranch: string;
 			sandboxId: string | null;
 			opencodeSessionId: string | null;
+			agentGuidance: string;
 			defaultModelId: string | null;
 			defaultModelProviderId: string | null;
 			role: KitchenRole;
 		}>();
+}
+
+/** Only a Kitchen's Head Chef may change the guidance shared by every App agent in that Kitchen. */
+export async function setKitchenAgentGuidance(
+	db: D1Database,
+	actorId: string,
+	kitchenId: string,
+	agentGuidance: string
+) {
+	const kitchen = await getKitchenAccess(db, actorId, kitchenId);
+	if (!kitchen) throw new Error('You do not have access to this Kitchen.');
+	if (kitchen.role !== 'head_chef') throw new Error('Only the Head Chef can change this Kitchen\'s agent guidance.');
+	await db
+		.prepare('UPDATE kitchens SET agent_guidance = ? WHERE id = ?')
+		.bind(agentGuidance, kitchenId)
+		.run();
 }
 
 /** Only a Kitchen's Head Chef may set the default model every app in that Kitchen starts with. `model: null` clears the override, falling back to the platform default (Luna). */

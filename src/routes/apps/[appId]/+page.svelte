@@ -18,6 +18,9 @@
 	let storage = $state<{ linked: { databaseId: string; databaseName: string } | null; orphans: Array<{ databaseId: string; databaseName: string }> } | null>(null);
 	let storageBusy = $state(false);
 	let storageError = $state<string | null>(null);
+	let agentGuidance = $state(data.app.agentGuidance ?? '');
+	let guidanceBusy = $state(false);
+	let guidanceMessage = $state<string | null>(null);
 
 	let panelTab = $state<'timeline' | 'preview'>('timeline');
 	let previewPort = $state('5173');
@@ -118,6 +121,20 @@
 		await session.destroySandbox();
 		destroying = false;
 	}
+
+	async function saveAgentGuidance() {
+		guidanceBusy = true;
+		guidanceMessage = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/agent-guidance`, {
+				method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ guidance: agentGuidance })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			guidanceMessage = 'Saved. It now applies to every app in this Kitchen.';
+		} catch (err) {
+			guidanceMessage = err instanceof Error ? err.message : String(err);
+		} finally { guidanceBusy = false; }
+	}
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
@@ -179,6 +196,13 @@
 
 			<div class="mt-auto space-y-2 pt-4">
 				{#if data.app.role === 'head_chef'}
+					<details class="rounded-md border border-slate-200 bg-white p-2">
+						<summary class="cursor-pointer text-xs font-medium text-slate-700">🤖 Kitchen agent rules</summary>
+						<p class="mt-2 text-[11px] text-slate-500">Shared with every app. Use plain language to set how the agent should help your team.</p>
+						<textarea bind:value={agentGuidance} maxlength="12000" rows="7" placeholder="For non-technical users: work out sensible next steps, ask only essential questions, and explain changes in plain English." class="mt-2 w-full rounded border border-slate-200 p-2 text-xs text-slate-700"></textarea>
+						<button type="button" onclick={saveAgentGuidance} disabled={guidanceBusy} class="mt-2 rounded bg-blue-600 px-2 py-1 text-xs font-medium text-white disabled:opacity-50">{guidanceBusy ? 'Saving…' : 'Save rules'}</button>
+						{#if guidanceMessage}<p class="mt-1 text-[11px] text-slate-600">{guidanceMessage}</p>{/if}
+					</details>
 					<button
 						type="button"
 						onclick={loadStorage}
