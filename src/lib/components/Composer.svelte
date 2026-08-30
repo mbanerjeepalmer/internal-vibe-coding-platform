@@ -13,7 +13,7 @@
 		submitTestId,
 		attachTestId = 'attach-file',
 		agentLabel = 'Build',
-		modelLabel = 'Claude Sonnet 5',
+		modelLabel = '',
 		onSubmit,
 		onAttach
 	}: {
@@ -120,7 +120,11 @@
 				<span
 					class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500"
 				>
-					{modelLabel}
+					{#if modelLabel}
+						{modelLabel}
+					{:else}
+						<span class="text-shimmer">Loading model…</span>
+					{/if}
 				</span>
 			</div>
 

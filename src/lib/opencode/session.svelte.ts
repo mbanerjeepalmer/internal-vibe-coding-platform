@@ -47,6 +47,8 @@ export class OpencodeSession {
 	connected = $state(false);
 	models = $state<ModelSummary[]>([]);
 	model = $state<ModelSummary | null>(null);
+	canSetKitchenDefault = $state(false);
+	kitchenDefaultOverride = $state<ModelRef | null>(null);
 	pendingPermissions = $state<PermissionRequest[]>([]);
 	destroyed = $state(false);
 	deploying = $state(false);
@@ -65,14 +67,28 @@ export class OpencodeSession {
 	constructor(private projectId: string) {}
 
 	async init() {
-		const modelsRes = await fetch(`/api/kitchen/${this.projectId}/models`);
-		const { models } = (await modelsRes.json()) as { models: ModelSummary[] };
+		// A cold sandbox can take up to ~5min to provision (see
+		// docs/03_opencode_backend_spec.md), and the request that lands on a
+		// still-provisioning sandbox can fail transiently (proxy timeout,
+		// connection reset) well before that. Retry with backoff instead of
+		// surfacing a one-shot failure that only a manual page refresh recovers.
+		const modelsRes = await this.fetchWithRetry(`/api/kitchen/${this.projectId}/models`);
+		const { models, defaultModel, canSetKitchenDefault, kitchenDefaultOverride } =
+			(await modelsRes.json()) as {
+				models: ModelSummary[];
+				defaultModel: ModelSummary | null;
+				canSetKitchenDefault: boolean;
+				kitchenDefaultOverride: ModelRef | null;
+			};
 		this.models = models;
-		// Prefer a model backed by the Kitchen's configured OpenAI credential;
-		// retain the free-model fallback for local development without a key.
-		this.model = models.find((m) => m.providerID === 'openai') ?? models.find((m) => m.free) ?? models[0] ?? null;
+		this.canSetKitchenDefault = canSetKitchenDefault;
+		this.kitchenDefaultOverride = kitchenDefaultOverride;
+		// The server already resolved this (Kitchen override, else the
+		// platform default "Luna", else a best-effort fallback) — see
+		// src/routes/api/kitchen/[projectId]/models/+server.ts.
+		this.model = defaultModel ?? models[0] ?? null;
 
-		const sessionRes = await fetch(`/api/kitchen/${this.projectId}/session`, {
+		const sessionRes = await this.fetchWithRetry(`/api/kitchen/${this.projectId}/session`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ model: this.model })
@@ -84,6 +100,21 @@ export class OpencodeSession {
 		// opencode doesn't durably-event permission requests, so we poll for
 		// them — see the note in the server-side permission route.
 		this.permissionPollTimer = setInterval(() => this.pollPermissions(), 1500);
+	}
+
+	private async fetchWithRetry(url: string, init?: RequestInit, maxAttempts = 8) {
+		let lastErr: unknown;
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			if (attempt > 0) await new Promise((r) => setTimeout(r, Math.min(2000 * attempt, 15000)));
+			try {
+				const res = await fetch(url, init);
+				if (res.ok) return res;
+				lastErr = new Error(`${res.status} ${res.statusText}`);
+			} catch (err) {
+				lastErr = err;
+			}
+		}
+		throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 	}
 
 	private async pollPermissions() {
@@ -189,6 +220,16 @@ export class OpencodeSession {
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ model })
 		});
+	}
+
+	/** Head-Chef-only: makes `model` (or, if null, the platform default "Luna") every app in this Kitchen starts with. */
+	async setKitchenDefault(model: ModelRef | null) {
+		await fetch(`/api/kitchen/${this.projectId}/kitchen-default-model`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ model })
+		});
+		this.kitchenDefaultOverride = model;
 	}
 
 	dispose() {

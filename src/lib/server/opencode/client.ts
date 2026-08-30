@@ -17,6 +17,15 @@ export interface ModelSummary extends ModelRef {
 	free?: boolean;
 }
 
+/**
+ * The platform-wide default model ("Luna") — registered as a custom model
+ * under opencode's built-in `openai` provider by the `opencode.json` written
+ * into every sandbox during provisioning (see sandbox.ts's `ensureModelConfig`).
+ * A Kitchen's Head Chef can override this per-Kitchen (see control-plane.ts's
+ * `setKitchenDefaultModel`).
+ */
+export const DEFAULT_MODEL: ModelRef = { id: 'gpt-5.6-luna', providerID: 'openai' };
+
 async function req<T>(target: Target, path: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(`${target.baseUrl}${path}`, {
 		...init,

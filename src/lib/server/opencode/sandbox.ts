@@ -146,6 +146,32 @@ done.
 	};
 }
 
+// Registers "Luna" (see client.ts's DEFAULT_MODEL) as a custom model under
+// opencode's built-in `openai` provider — going straight to OpenAI's API
+// (already reachable per DOMAIN_ALLOW_LIST, already credentialed via
+// OPENAI_API_KEY) rather than through opencode's zen gateway.
+function opencodeConfig(): string {
+	return JSON.stringify(
+		{
+			$schema: 'https://opencode.ai/config.json',
+			provider: {
+				openai: {
+					models: {
+						'gpt-5.6-luna': { name: 'GPT 5.6 Luna' }
+					}
+				}
+			}
+		},
+		null,
+		2
+	);
+}
+
+// Doesn't write opencodeConfig() into the developer's real `~/.config/opencode`
+// — this runs against a locally installed `opencode` CLI, not a disposable
+// sandbox, so mutating global config here would leak into the developer's own
+// setup. "Luna" (see client.ts's DEFAULT_MODEL) is therefore only available
+// through Daytona sandboxes; local dev falls through to the next default.
 class LocalProcessSandboxProvider implements SandboxProvider {
 	private sandboxes = new Map<string, Promise<Sandbox>>();
 	private children = new Map<string, import('node:child_process').ChildProcess>();
@@ -383,6 +409,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		}
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
+		await this.ensureModelConfig(daytonaSandbox);
 		await this.ensureProjectScaffold(daytonaSandbox, projectId);
 
 		const preview = await daytonaSandbox.getPreviewLink(OPENCODE_PORT);
@@ -453,6 +480,23 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		);
 		if (install.exitCode !== 0) {
 			throw new Error(`installing opencode in the Daytona sandbox failed:\n${install.result}`);
+		}
+	}
+
+	// Global (not project-level) config, so it lives outside the working
+	// directory the agent edits and can't be clobbered by agent writes.
+	private async ensureModelConfig(daytonaSandbox: { process: DaytonaProcess }) {
+		const check = await daytonaSandbox.process.executeCommand(
+			'test -f ~/.config/opencode/opencode.json && echo present'
+		);
+		if (check.result?.includes('present')) return;
+
+		const contents = opencodeConfig();
+		const result = await daytonaSandbox.process.executeCommand(
+			`mkdir -p ~/.config/opencode && printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ~/.config/opencode/opencode.json`
+		);
+		if (result.exitCode !== 0) {
+			throw new Error(`writing opencode's model config in the Daytona sandbox failed:\n${result.result}`);
 		}
 	}
 

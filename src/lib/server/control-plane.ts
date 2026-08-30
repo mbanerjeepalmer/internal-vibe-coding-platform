@@ -374,6 +374,7 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 		.prepare(
 			`SELECT a.id, a.name, a.kitchen_id AS kitchenId, k.name AS kitchenName, a.git_branch AS gitBranch,
 			 a.sandbox_id AS sandboxId, a.opencode_session_id AS opencodeSessionId,
+			 k.default_model_id AS defaultModelId, k.default_model_provider_id AS defaultModelProviderId,
 			 CASE WHEN om.role = 'owner' THEN 'head_chef' ELSE km.role END AS role
 			 FROM apps a JOIN kitchens k ON k.id = a.kitchen_id
 			 LEFT JOIN kitchen_memberships km ON km.kitchen_id = k.id AND km.user_id = ?
@@ -389,6 +390,24 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 			gitBranch: string;
 			sandboxId: string | null;
 			opencodeSessionId: string | null;
+			defaultModelId: string | null;
+			defaultModelProviderId: string | null;
 			role: KitchenRole;
 		}>();
+}
+
+/** Only a Kitchen's Head Chef may set the default model every app in that Kitchen starts with. `model: null` clears the override, falling back to the platform default (Luna). */
+export async function setKitchenDefaultModel(
+	db: D1Database,
+	actorId: string,
+	kitchenId: string,
+	model: { id: string; providerID: string } | null
+) {
+	const kitchen = await getKitchenAccess(db, actorId, kitchenId);
+	if (!kitchen) throw new Error('You do not have access to this Kitchen.');
+	if (kitchen.role !== 'head_chef') throw new Error('Only the Head Chef can change this Kitchen\'s default model.');
+	await db
+		.prepare('UPDATE kitchens SET default_model_id = ?, default_model_provider_id = ? WHERE id = ?')
+		.bind(model?.id ?? null, model?.providerID ?? null, kitchenId)
+		.run();
 }

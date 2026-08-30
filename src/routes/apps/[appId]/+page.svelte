@@ -97,10 +97,10 @@
 				<span class="truncate text-slate-700">{data.app.name}</span>
 			</div>
 
+			<p class="mt-4 mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
+				Model
+			</p>
 			{#if session.models.length > 0}
-				<p class="mt-4 mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
-					Model
-				</p>
 				<select
 					class="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700"
 					value={session.model?.id}
@@ -113,6 +113,26 @@
 						<option value={m.id}>{m.name}{m.free ? ' (free)' : ''}</option>
 					{/each}
 				</select>
+
+				{#if session.canSetKitchenDefault}
+					{@const isKitchenDefault =
+						session.model &&
+						session.kitchenDefaultOverride?.id === session.model.id &&
+						session.kitchenDefaultOverride?.providerID === session.model.providerID}
+					<button
+						type="button"
+						class="mt-1 self-start px-2 text-left text-[11px] text-blue-600 hover:underline"
+						onclick={() => session.setKitchenDefault(isKitchenDefault ? null : session.model)}
+					>
+						{isKitchenDefault
+							? 'Clear kitchen default (revert to Luna)'
+							: 'Set as this Kitchen’s default'}
+					</button>
+				{/if}
+			{:else if initError}
+				<p class="px-2 text-xs text-red-600">Unavailable — sandbox failed to start.</p>
+			{:else}
+				<p class="text-shimmer px-2 text-xs text-slate-400">Waking up sandbox…</p>
 			{/if}
 
 			<div class="mt-auto space-y-2 pt-4">
@@ -330,6 +350,7 @@
 					disabled={!ready}
 					busy={session.busy}
 					placeholder="Ask opencode to do something"
+					modelLabel={session.model?.name ?? ''}
 					onSubmit={submit}
 				/>
 			</div>
