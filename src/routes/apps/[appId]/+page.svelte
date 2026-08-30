@@ -28,7 +28,7 @@
 	let requestedSecretBusy = $state<string | null>(null);
 	let requestedSecretError = $state<Record<string, string>>({});
 
-	let panelTab = $state<'timeline' | 'preview'>('timeline');
+	let panelTab = $state<'timeline' | 'preview' | 'menu'>('timeline');
 	let previewPort = $state('5173');
 	let previewSrc = $state<string | null>(null);
 
@@ -119,6 +119,14 @@
 		if (!Number.isInteger(port) || port <= 0) return;
 		previewSrc = `/api/kitchen/${data.app.id}/preview/${port}/`;
 		panelTab = 'preview';
+	}
+
+	function startDevServer() {
+		const port = Number(previewPort) || 5173;
+		session.sendPrompt(
+			`Start this project's dev server on port ${port} (for example \`npm run dev\`, adjusted for this project's stack) and keep it running in the background so the Preview panel can reach it. Reply once it's up so I know to open the preview.`
+		);
+		panelTab = 'timeline';
 	}
 
 	async function destroy() {
@@ -215,8 +223,38 @@
 		role={data.app.role === 'head_chef' ? 'Head Chef' : 'Chef'}
 	/>
 
+	<div class="flex items-center gap-1 border-b border-slate-200 bg-white px-3 pt-2 md:hidden">
+		<button
+			type="button"
+			onclick={() => (panelTab = 'timeline')}
+			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'timeline'
+				? 'border-blue-600 text-blue-700'
+				: 'border-transparent text-slate-500'}">Chat</button
+		>
+		<button
+			type="button"
+			onclick={() => (panelTab = 'preview')}
+			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'preview'
+				? 'border-blue-600 text-blue-700'
+				: 'border-transparent text-slate-500'}">Preview</button
+		>
+		<button
+			type="button"
+			data-testid="mobile-app-menu-tab"
+			onclick={() => (panelTab = 'menu')}
+			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'menu'
+				? 'border-blue-600 text-blue-700'
+				: 'border-transparent text-slate-500'}">App</button
+		>
+	</div>
+
 	<div class="flex flex-1 overflow-hidden">
-		<aside class="hidden w-56 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3 md:flex">
+		<aside
+			class="w-full shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-50/60 p-3 md:w-56 {panelTab ===
+			'menu'
+				? 'flex'
+				: 'hidden md:flex'}"
+		>
 			<p class="mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
 				App
 			</p>
@@ -397,26 +435,11 @@
 			</div>
 		</aside>
 
-		<section class="flex min-w-0 flex-1 flex-col md:w-1/2">
-			<div class="flex items-center gap-1 border-b border-slate-200 bg-white px-3 pt-2 md:hidden">
-				<button
-					type="button"
-					onclick={() => (panelTab = 'timeline')}
-					class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'timeline'
-						? 'border-blue-600 text-blue-700'
-						: 'border-transparent text-slate-500'}">Chat</button
-				>
-				<button
-					type="button"
-					onclick={() => (panelTab = 'preview')}
-					class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'preview'
-						? 'border-blue-600 text-blue-700'
-						: 'border-transparent text-slate-500'}">Preview</button
-				>
-			</div>
-
+		<section
+			class="min-w-0 flex-1 flex-col md:w-1/2 {panelTab === 'timeline' ? 'flex' : 'hidden md:flex'}"
+		>
 			<div
-				class="flex-1 space-y-5 overflow-y-auto p-6 {panelTab === 'preview' ? 'hidden md:block' : ''}"
+				class="flex-1 space-y-5 overflow-y-auto p-6"
 				data-testid="live-timeline"
 			>
 				{#if initError}
@@ -513,7 +536,7 @@
 				{/each}
 			</div>
 
-			<div class="border-t border-slate-200 bg-white p-4 {panelTab === 'preview' ? 'hidden md:block' : ''}">
+			<div class="border-t border-slate-200 bg-white p-4">
 				{#if pendingFiles.length > 0}
 					<div class="mb-2 flex flex-wrap gap-2">
 						{#each pendingFiles as f (f.name)}
@@ -586,9 +609,21 @@
 						class="h-full w-full border-0"
 					></iframe>
 				{:else}
-					<p class="text-sm text-slate-400">
-						Enter the port the agent's dev server is running on, then Open.
-					</p>
+					<div class="flex max-w-xs flex-col items-center gap-3 px-4 text-center">
+						<p class="text-sm text-slate-400">
+							Nothing's running on port {previewPort || '5173'} yet. Ask the agent to start a dev
+							server, then hit Open.
+						</p>
+						<button
+							type="button"
+							data-testid="start-dev-server"
+							onclick={startDevServer}
+							disabled={!ready}
+							class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+						>
+							▶️ Ask agent to start dev server
+						</button>
+					</div>
 				{/if}
 			</div>
 		</section>

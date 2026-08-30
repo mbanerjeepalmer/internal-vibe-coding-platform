@@ -16,7 +16,9 @@
 </script>
 
 <div class="min-h-screen bg-stone-50">
-	<header class="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-3">
+	<header
+		class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-stone-200 bg-white px-3 py-2 sm:px-6 sm:py-3"
+	>
 		<div class="flex items-center gap-3">
 			<span class="text-xl">🍳</span>
 			<div>
@@ -24,13 +26,19 @@
 				<p class="text-xs text-stone-500">vibe.kitchen</p>
 			</div>
 		</div>
-		<div class="flex items-center gap-4">
-			<div class="text-right">
+		<div class="flex flex-wrap items-center justify-end gap-2 sm:gap-4">
+			<div class="hidden text-right sm:block">
 				<a href={`/users/${data.user.id}`} class="text-sm font-medium text-stone-900 hover:underline">
 					{data.user.name || data.user.email}
 				</a>
 				<p class="text-xs text-stone-500">{data.role === 'owner' ? 'Organisation owner' : 'Member'}</p>
 			</div>
+			<a
+				href={`/users/${data.user.id}`}
+				class="text-sm font-medium text-stone-900 hover:underline sm:hidden"
+			>
+				{data.user.name || data.user.email}
+			</a>
 			<a
 				href="/account"
 				class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
@@ -102,8 +110,8 @@
 				<ul class="flex flex-col gap-2">
 					{#each data.kitchens as kitchen (kitchen.id)}
 						<li class="rounded-lg border border-stone-200 bg-white p-4">
-							<div class="flex items-center justify-between">
-								<div>
+							<div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+								<div class="min-w-0">
 									<a
 										href={`/kitchens/${kitchen.id}`}
 										class="text-sm font-semibold text-stone-900 hover:underline"
@@ -117,7 +125,7 @@
 										{kitchen.appCount === 1 ? 'app' : 'apps'}
 									</p>
 								</div>
-								<div class="flex shrink-0 gap-3">
+								<div class="flex flex-wrap gap-3">
 									<a href={`/kitchens/${kitchen.id}`} class="text-xs font-medium text-amber-700 hover:underline">Kitchen settings</a>
 									<button
 										type="button"
@@ -226,10 +234,10 @@
 					<ul class="flex flex-col gap-2">
 						{#each data.pendingInvitations as invitation (invitation.id)}
 							<li
-								class="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-4 py-2.5"
+								class="flex items-center justify-between gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2.5"
 							>
-								<div>
-									<p class="text-sm text-stone-900">{invitation.email}</p>
+								<div class="min-w-0">
+									<p class="truncate text-sm text-stone-900">{invitation.email}</p>
 									<p class="text-xs text-stone-500">
 										{invitation.kitchenName
 											? `${invitation.kitchenRole} in ${invitation.kitchenName}`

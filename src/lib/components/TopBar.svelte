@@ -47,7 +47,9 @@
 	});
 </script>
 
-<header class="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-3">
+<header
+	class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-stone-200 bg-white px-3 py-2 sm:px-6 sm:py-3"
+>
 	<div class="flex min-w-0 items-center gap-2 text-sm">
 		<span class="text-xl">🍳</span>
 		<a href={kitchenHref} class="shrink-0 font-semibold text-stone-900 hover:underline">
@@ -73,16 +75,24 @@
 			</button>
 		{/if}
 	</div>
-	<div class="flex shrink-0 items-center gap-4">
+	<div class="flex shrink-0 items-center gap-2 sm:gap-4">
 		<div class="text-right">
 			<a href={userHref} class="text-sm font-medium text-stone-900 hover:underline">{name}</a>
 			<p class="text-xs text-stone-500">{role}</p>
 		</div>
 		<a
 			href={logoutHref}
-			class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
+			class="hidden rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100 sm:block"
 		>
 			Back to dashboard
+		</a>
+		<a
+			href={logoutHref}
+			title="Back to dashboard"
+			aria-label="Back to dashboard"
+			class="rounded-md border border-stone-300 px-2.5 py-1.5 text-sm text-stone-600 hover:bg-stone-100 sm:hidden"
+		>
+			←
 		</a>
 	</div>
 </header>
