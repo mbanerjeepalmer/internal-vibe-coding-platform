@@ -59,6 +59,14 @@ const OPENCODE_VERSION = '1.18.25';
 const OPENCODE_PORT = 4096;
 const WRANGLER_VERSION = '4.127.1';
 
+// Must match SNAPSHOT_NAME in scripts/build-daytona-snapshot.ts — that script
+// bakes opencode@OPENCODE_VERSION into this snapshot so `provision` below
+// doesn't need to `npm install` it cold in every fresh sandbox. Bumping
+// OPENCODE_VERSION means rebuilding the snapshot before this takes effect;
+// until then `ensureOpencodeInstalled` below is the fallback for a sandbox
+// that came from an older/default snapshot without it.
+const DAYTONA_SNAPSHOT = `vibe-kitchen-opencode-${OPENCODE_VERSION}`;
+
 // Daytona sandboxes sit behind a domain-allowlisting egress proxy (an HTTPS
 // request to a non-listed domain gets a mid-handshake connection reset, which
 // surfaces to `wrangler` as a generic "fetch failed" network error — this is
@@ -230,7 +238,10 @@ class LocalProcessSandboxProvider implements SandboxProvider {
  *     (1.1.35 — pre `/api/*` v2 routes) at a *root-owned* global npm
  *     location, so neither using it nor `opencode upgrade`-ing it in place
  *     works (EACCES). We install our own pinned copy into the sandbox
- *     user's home directory instead, which is writable.
+ *     user's home directory instead — baked into our own snapshot
+ *     (`DAYTONA_SNAPSHOT`, built by scripts/build-daytona-snapshot.ts) so a
+ *     fresh sandbox doesn't pay for that `npm install` on every provision;
+ *     `ensureOpencodeInstalled` below is only a fallback.
  *   - `sandbox.getPreviewLink(port)` returns an HTTPS tunnel URL plus a
  *     token; the token must be sent as the `x-daytona-preview-token`
  *     header (a `?daytona-preview-token=` query param, which seemed like
@@ -305,7 +316,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		}
 		if (!daytonaSandbox) {
 			daytonaSandbox = await daytona.create(
-				{ labels: label, domainAllowList: DOMAIN_ALLOW_LIST },
+				{ snapshot: DAYTONA_SNAPSHOT, labels: label, domainAllowList: DOMAIN_ALLOW_LIST },
 				{ timeout: 90 }
 			);
 		} else if (daytonaSandbox.state !== 'started') {
