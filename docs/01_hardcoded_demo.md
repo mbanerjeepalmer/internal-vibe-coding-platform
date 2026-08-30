@@ -20,8 +20,15 @@ We'll try to build it to be platform-agnostic. But here's the journey we'll want
 - A lot of the above, the Red/Green TDD and PostHog, for example, seems to have come for free. We see in the parent config that this is because Maurice has already configured all of this for the 'Kitchen' called 'Maurice's non-technical friends'.
   - Open question: how does this configuration work? Some of it should clearly be agent skills (e.g. asking clarifying questions and following Red/Green TDD). Some of it should be part of the container (in this case Daytona) configuration.
 - We propose a change to the parent config, to avoid the same type of crash as we already had.
+- Now we 'log out, then log in' as Maurice.
+- We see that Alexandra is just one of many 'chefs' that I've invited to my 'kitchen'. And in fact, Claudia is the chef above both of us. I can see Alexandra's project and conversation history. I can also see the change that she's proposed to my config. I go to change her permissions so that she can only deploy with my approval.
 
 
 ## Tech notes
-- Build this parent as a SvelteKit project, using Tailwind.
+- Build this hardcoded demo of the end-to-end flow as a SvelteKit project, using Tailwind.
 - Red/Green TDD and pyramid testing with Playwright.
+- Implement this using a worktree -- I want to be able to continue editing the main repo.
+- Deploy to Cloudflare -- I'll need to give you some creds for Wrangler.
+
+## Coding agent notes
+<!--Communicate here with a timestamp at the start of the line and a terse note afterwards. Note you may be working in a worktree so would need to refer back to the home.-->
