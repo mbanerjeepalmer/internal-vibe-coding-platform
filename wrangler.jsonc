@@ -7,5 +7,17 @@
 	"assets": {
 		"binding": "ASSETS",
 		"directory": ".svelte-kit/cloudflare"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "ivcp-control-plane",
+			"database_id": "9793ed07-b60c-45a4-8b73-36cf285c29e2",
+			"migrations_dir": "migrations"
+		}
+	],
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
 	}
 }
