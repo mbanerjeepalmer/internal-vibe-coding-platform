@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { kitchenName } from '$lib/data/chefs';
-
-	let { name, role, logoutHref = '/login' }: { name: string; role: string; logoutHref?: string } =
-		$props();
+	let {
+		kitchenName,
+		name,
+		role,
+		logoutHref = '/home'
+	}: { kitchenName: string; name: string; role: string; logoutHref?: string } = $props();
 </script>
 
 <header class="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-3">
@@ -22,7 +24,7 @@
 			href={logoutHref}
 			class="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-600 hover:bg-stone-100"
 		>
-			Log out
+			Back to dashboard
 		</a>
 	</div>
 </header>

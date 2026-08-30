@@ -49,6 +49,11 @@ export class OpencodeSession {
 	model = $state<ModelSummary | null>(null);
 	pendingPermissions = $state<PermissionRequest[]>([]);
 	destroyed = $state(false);
+	deploying = $state(false);
+	deployed = $state(false);
+	deployResult = $state<{ action: 'deploy' | 'undeploy'; success: boolean; log: string; url?: string } | null>(
+		null
+	);
 
 	sessionId: string | null = null;
 	private itemIndex = new Map<string, number>();
@@ -63,7 +68,9 @@ export class OpencodeSession {
 		const modelsRes = await fetch(`/api/kitchen/${this.projectId}/models`);
 		const { models } = (await modelsRes.json()) as { models: ModelSummary[] };
 		this.models = models;
-		this.model = models.find((m) => m.free) ?? models[0] ?? null;
+		// Prefer a model backed by the Kitchen's configured OpenAI credential;
+		// retain the free-model fallback for local development without a key.
+		this.model = models.find((m) => m.providerID === 'openai') ?? models.find((m) => m.free) ?? models[0] ?? null;
 
 		const sessionRes = await fetch(`/api/kitchen/${this.projectId}/session`, {
 			method: 'POST',
@@ -103,6 +110,36 @@ export class OpencodeSession {
 			}
 		);
 		this.pendingPermissions = this.pendingPermissions.filter((p) => p.id !== requestId);
+	}
+
+	async deploy() {
+		await this.runDeployAction('deploy');
+	}
+
+	/** Tears down the worker this project deployed (not the sandbox itself — see `destroySandbox`). */
+	async undeploy() {
+		await this.runDeployAction('undeploy');
+	}
+
+	private async runDeployAction(action: 'deploy' | 'undeploy') {
+		this.deploying = true;
+		this.deployResult = null;
+		try {
+			const res = await fetch(`/api/kitchen/${this.projectId}/deploy`, {
+				method: action === 'deploy' ? 'POST' : 'DELETE'
+			});
+			const body = (await res.json()) as { success: boolean; log: string; url?: string };
+			this.deployResult = { action, ...body };
+			if (body.success) this.deployed = action === 'deploy';
+		} catch (err) {
+			this.deployResult = {
+				action,
+				success: false,
+				log: err instanceof Error ? err.message : String(err)
+			};
+		} finally {
+			this.deploying = false;
+		}
 	}
 
 	async destroySandbox() {

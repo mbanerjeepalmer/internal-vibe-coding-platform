@@ -24,12 +24,32 @@ export interface PreviewTarget {
 	headers?: Record<string, string>;
 }
 
+export interface DeployResult {
+	success: boolean;
+	log: string;
+	url?: string;
+}
+
+export interface CloudflareCredentials extends Record<string, string> {
+	CLOUDFLARE_API_TOKEN: string;
+	CLOUDFLARE_ACCOUNT_ID: string;
+}
+
 export interface SandboxProvider {
 	getOrCreateSandbox(projectId: string): Promise<Sandbox>;
 	/** Resolves an arbitrary port inside a project's sandbox to a reachable URL. Sandbox must already exist. */
 	getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget>;
 	/** Tears the project's sandbox down entirely (the "hard delete this app" flow in docs/01_hardcoded_demo.md). */
 	destroySandbox(projectId: string): Promise<void>;
+	/** Runs `wrangler deploy` against whatever the agent has written in the project's working directory. */
+	deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
+	/**
+	 * Runs `wrangler delete` in the project's working directory, tearing down
+	 * only the worker named in that directory's own `wrangler.jsonc` — since
+	 * the name comes from a file the caller never gets to specify, this can
+	 * never be pointed at an arbitrary worker outside the project.
+	 */
+	undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult>;
 }
 
 // The version we traced opencode's v2 API against (docs/03_opencode_backend_spec.md's
@@ -37,10 +57,48 @@ export interface SandboxProvider {
 // can't silently drift the event/REST shapes our reducer depends on.
 const OPENCODE_VERSION = '1.18.25';
 const OPENCODE_PORT = 4096;
+const WRANGLER_VERSION = '4.127.1';
+
+// Must match SNAPSHOT_NAME in scripts/build-daytona-snapshot.ts — that script
+// bakes opencode@OPENCODE_VERSION into this snapshot so `provision` below
+// doesn't need to `npm install` it cold in every fresh sandbox. Bumping
+// OPENCODE_VERSION means rebuilding the snapshot before this takes effect;
+// until then `ensureOpencodeInstalled` below is the fallback for a sandbox
+// that came from an older/default snapshot without it.
+const DAYTONA_SNAPSHOT = `vibe-kitchen-opencode-${OPENCODE_VERSION}`;
+
+// Daytona sandboxes sit behind a domain-allowlisting egress proxy (an HTTPS
+// request to a non-listed domain gets a mid-handshake connection reset, which
+// surfaces to `wrangler` as a generic "fetch failed" network error — this is
+// what broke `wrangler deploy`, confirmed against a live sandbox). The
+// default allowlist doesn't include Cloudflare's API. `domainAllowList`
+// replaces rather than extends the default list, so it must also keep npm's
+// registry (needed for `npx wrangler` itself, and opencode's own install).
+const DOMAIN_ALLOW_LIST =
+	'api.cloudflare.com,*.cloudflare.com,workers.dev,*.workers.dev,api.openai.com,registry.npmjs.org,*.npmjs.org';
+
+/**
+ * A minimal Workers project seeded into the agent's working directory before
+ * opencode starts, so there's always something deployable — the agent edits
+ * this rather than starting from an empty directory, and "Deploy" always has
+ * a `wrangler.jsonc` to run against even before the agent touches anything.
+ */
+function starterFiles(projectId: string): Record<string, string> {
+	const workerName = `vibe-${projectId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+	return {
+		'wrangler.jsonc': JSON.stringify(
+			{ name: workerName, main: 'index.js', compatibility_date: '2026-08-30' },
+			null,
+			2
+		),
+		'index.js': `export default {\n\tasync fetch(request) {\n\t\treturn new Response('Hello from ${workerName}! Ask the agent to build something.');\n\t}\n};\n`
+	};
+}
 
 class LocalProcessSandboxProvider implements SandboxProvider {
 	private sandboxes = new Map<string, Promise<Sandbox>>();
 	private children = new Map<string, import('node:child_process').ChildProcess>();
+	private cwds = new Map<string, string>();
 
 	getOrCreateSandbox(projectId: string): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
@@ -62,6 +120,45 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		this.children.get(projectId)?.kill();
 		this.children.delete(projectId);
 		this.sandboxes.delete(projectId);
+		this.cwds.delete(projectId);
+	}
+
+	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['deploy']);
+	}
+
+	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, ['delete', '--force']);
+	}
+
+	private async runWrangler(
+		projectId: string,
+		creds: CloudflareCredentials,
+		args: string[]
+	): Promise<DeployResult> {
+		await this.getOrCreateSandbox(projectId);
+		const cwd = this.cwds.get(projectId);
+		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
+
+		const { execFile } = await import('node:child_process');
+		const { promisify } = await import('node:util');
+		const run = promisify(execFile);
+
+		try {
+			const { stdout, stderr } = await run(
+				'npx',
+				['--yes', `wrangler@${WRANGLER_VERSION}`, ...args],
+				{ cwd, env: { ...process.env, ...creds }, timeout: 120_000 }
+			);
+			const log = `${stdout}\n${stderr}`;
+			return { success: true, log, url: log.match(/https:\/\/\S+\.workers\.dev/)?.[0] };
+		} catch (err) {
+			const log =
+				err && typeof err === 'object' && 'stdout' in err
+					? `${(err as { stdout?: string }).stdout ?? ''}\n${(err as { stderr?: string }).stderr ?? ''}`
+					: String(err);
+			return { success: false, log };
+		}
 	}
 
 	private async spawn(projectId: string): Promise<Sandbox> {
@@ -72,6 +169,12 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 
 		const cwd = path.join(os.tmpdir(), 'vibe-kitchen-sandboxes', projectId);
 		await fs.mkdir(cwd, { recursive: true });
+		this.cwds.set(projectId, cwd);
+
+		for (const [name, contents] of Object.entries(starterFiles(projectId))) {
+			const filePath = path.join(cwd, name);
+			await fs.access(filePath).catch(() => fs.writeFile(filePath, contents));
+		}
 
 		const baseUrl = await new Promise<string>((resolve, reject) => {
 			const child = spawn('opencode', ['serve', '--port', '0', '--hostname', '127.0.0.1'], {
@@ -135,13 +238,22 @@ class LocalProcessSandboxProvider implements SandboxProvider {
  *     (1.1.35 — pre `/api/*` v2 routes) at a *root-owned* global npm
  *     location, so neither using it nor `opencode upgrade`-ing it in place
  *     works (EACCES). We install our own pinned copy into the sandbox
- *     user's home directory instead, which is writable.
+ *     user's home directory instead — baked into our own snapshot
+ *     (`DAYTONA_SNAPSHOT`, built by scripts/build-daytona-snapshot.ts) so a
+ *     fresh sandbox doesn't pay for that `npm install` on every provision;
+ *     `ensureOpencodeInstalled` below is only a fallback.
  *   - `sandbox.getPreviewLink(port)` returns an HTTPS tunnel URL plus a
  *     token; the token must be sent as the `x-daytona-preview-token`
  *     header (a `?daytona-preview-token=` query param, which seemed like
  *     the more likely shape, returns 401 — confirmed against a live
  *     sandbox, not guessed).
  */
+// Fixed working directory the agent writes into inside every project's
+// sandbox — opencode is started with this as its cwd, and `deployProject`
+// runs `wrangler deploy` from the same place, so the two always agree on
+// where "the project" lives without needing to ask opencode.
+const PROJECT_DIR = '~/project';
+
 class DaytonaSandboxProvider implements SandboxProvider {
 	private sandboxes = new Map<string, Promise<Sandbox>>();
 	// The raw Daytona SDK sandbox object per project, kept alongside `sandboxes`
@@ -149,7 +261,10 @@ class DaytonaSandboxProvider implements SandboxProvider {
 	private raw = new Map<string, DaytonaSandboxHandle>();
 	private daytonaPromise: ReturnType<typeof this.makeClient> | undefined;
 
-	constructor(private apiKey: string) {}
+	constructor(
+		private apiKey: string,
+		private openaiApiKey?: string
+	) {}
 
 	private async makeClient() {
 		patchFetchForWorkersCacheBug();
@@ -200,19 +315,77 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			break;
 		}
 		if (!daytonaSandbox) {
-			daytonaSandbox = await daytona.create({ labels: label }, { timeout: 90 });
+			daytonaSandbox = await daytona.create(
+				{ snapshot: DAYTONA_SNAPSHOT, labels: label, domainAllowList: DOMAIN_ALLOW_LIST },
+				{ timeout: 90 }
+			);
 		} else if (daytonaSandbox.state !== 'started') {
 			await daytona.start(daytonaSandbox, 60);
 		}
 		this.raw.set(projectId, daytonaSandbox);
+		if (this.openaiApiKey) {
+			// OpenCode reads the standard OpenAI environment variable. `updateEnv`
+			// changes the sandbox daemon's environment, so it is applied before a
+			// new `opencode serve` process is started and never travels through the
+			// browser, prompt, OpenCode API, or repository.
+			await daytonaSandbox.updateEnv({ OPENAI_API_KEY: this.openaiApiKey });
+		}
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
+		await this.ensureProjectScaffold(daytonaSandbox, projectId);
 
 		const preview = await daytonaSandbox.getPreviewLink(OPENCODE_PORT);
 		const headers = { 'x-daytona-preview-token': preview.token };
 		await this.ensureServerRunning(daytonaSandbox, preview.url, headers);
 
 		return { projectId, baseUrl: preview.url, headers };
+	}
+
+	async deployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'deploy');
+	}
+
+	async undeployProject(projectId: string, creds: CloudflareCredentials): Promise<DeployResult> {
+		return this.runWrangler(projectId, creds, 'delete --force');
+	}
+
+	private async runWrangler(
+		projectId: string,
+		creds: CloudflareCredentials,
+		args: string
+	): Promise<DeployResult> {
+		await this.getOrCreateSandbox(projectId);
+		const daytonaSandbox = this.raw.get(projectId);
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+
+		const result = await daytonaSandbox.process.executeCommand(
+			`cd ${PROJECT_DIR} && npx --yes wrangler@${WRANGLER_VERSION} ${args}`,
+			undefined,
+			creds,
+			120
+		);
+		const log = result.result ?? '';
+		return {
+			success: result.exitCode === 0,
+			log,
+			url: log.match(/https:\/\/\S+\.workers\.dev/)?.[0]
+		};
+	}
+
+	private async ensureProjectScaffold(daytonaSandbox: { process: DaytonaProcess }, projectId: string) {
+		const check = await daytonaSandbox.process.executeCommand(
+			`test -f ${PROJECT_DIR}/wrangler.jsonc && echo present`
+		);
+		if (check.result?.includes('present')) return;
+
+		const files = starterFiles(projectId);
+		const writes = Object.entries(files)
+			.map(([name, contents]) => `printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ${PROJECT_DIR}/${name}`)
+			.join(' && ');
+		const result = await daytonaSandbox.process.executeCommand(`mkdir -p ${PROJECT_DIR} && ${writes}`);
+		if (result.exitCode !== 0) {
+			throw new Error(`seeding the starter project into the Daytona sandbox failed:\n${result.result}`);
+		}
 	}
 
 	private async ensureOpencodeInstalled(daytonaSandbox: { process: DaytonaProcess }) {
@@ -246,7 +419,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			// Session already exists from a prior provision of this same sandbox — fine.
 		}
 		await daytonaSandbox.process.executeSessionCommand(sessionId, {
-			command: `~/opencode-runtime/node_modules/.bin/opencode serve --port ${OPENCODE_PORT} --hostname 0.0.0.0 > /tmp/opencode.log 2>&1`,
+			command: `cd ${PROJECT_DIR} && ~/opencode-runtime/node_modules/.bin/opencode serve --port ${OPENCODE_PORT} --hostname 0.0.0.0 > /tmp/opencode.log 2>&1`,
 			runAsync: true
 		});
 
@@ -324,7 +497,7 @@ let provider: SandboxProvider | undefined;
 export function getSandboxProvider(): SandboxProvider {
 	if (!provider) {
 		provider = env.DAYTONA_API_KEY
-			? new DaytonaSandboxProvider(env.DAYTONA_API_KEY)
+			? new DaytonaSandboxProvider(env.DAYTONA_API_KEY, env.OPENAI_API_KEY)
 			: new LocalProcessSandboxProvider();
 	}
 	return provider;

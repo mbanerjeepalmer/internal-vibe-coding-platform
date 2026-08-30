@@ -33,3 +33,4 @@ vite.config.ts.timestamp-*
 # Not essential, but sometimes MCP configs  include secrets
 .mcp.json
 static/three-voice-notes-cropped.mp4
+static/Cap 2026-08-30 at 16.54.06.mp4

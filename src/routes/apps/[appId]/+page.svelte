@@ -3,14 +3,12 @@
 	import ChatMessage from '$lib/components/ChatMessage.svelte';
 	import ToolCall from '$lib/components/ToolCall.svelte';
 	import Composer from '$lib/components/Composer.svelte';
-	import { page } from '$app/state';
 	import { OpencodeSession, type PromptFile } from '$lib/opencode/session.svelte';
+	import type { PageData } from './$types';
 
-	// One opencode session per project; defaults to a single demo project until
-	// the real Kitchen/project model lands (see docs/01_hardcoded_demo.md).
-	// `?project=` override exists for local testing against a specific sandbox.
-	const projectId = page.url.searchParams.get('project') ?? 'demo-project';
-	const session = new OpencodeSession(projectId);
+	let { data }: { data: PageData } = $props();
+
+	const session = new OpencodeSession(data.app.id);
 	let composerValue = $state('');
 	let ready = $state(false);
 	let initError = $state<string | null>(null);
@@ -68,7 +66,7 @@
 	function openPreview() {
 		const port = Number(previewPort);
 		if (!Number.isInteger(port) || port <= 0) return;
-		previewSrc = `/api/kitchen/${projectId}/preview/${port}/`;
+		previewSrc = `/api/kitchen/${data.app.id}/preview/${port}/`;
 		panelTab = 'preview';
 	}
 
@@ -81,18 +79,22 @@
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
-	<TopBar name="Alexandra" role="Chef" />
+	<TopBar
+		kitchenName={data.app.kitchenName}
+		name={data.user.name || data.user.email}
+		role={data.app.role === 'head_chef' ? 'Head Chef' : 'Chef'}
+	/>
 
 	<div class="flex flex-1 overflow-hidden">
 		<aside class="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60 p-3 md:flex">
 			<p class="mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
-				Sessions
+				App
 			</p>
 			<div class="flex items-center gap-2 rounded-lg bg-white px-2.5 py-2 text-sm shadow-sm">
 				<span
 					class="h-1.5 w-1.5 shrink-0 rounded-full {session.busy ? 'bg-blue-500' : 'bg-emerald-500'}"
 				></span>
-				<span class="truncate text-slate-700">opencode live session</span>
+				<span class="truncate text-slate-700">{data.app.name}</span>
 			</div>
 
 			{#if session.models.length > 0}
@@ -113,7 +115,68 @@
 				</select>
 			{/if}
 
-			<div class="mt-auto pt-4">
+			<div class="mt-auto space-y-2 pt-4">
+				<button
+					type="button"
+					data-testid="deploy-project"
+					onclick={() => session.deploy()}
+					disabled={session.deploying || session.destroyed}
+					class="w-full rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+				>
+					{session.deploying && session.deployResult?.action !== 'undeploy'
+						? 'Deploying…'
+						: '🚀 Deploy to Cloudflare'}
+				</button>
+
+				{#if session.deployed}
+					<button
+						type="button"
+						data-testid="undeploy-project"
+						onclick={() => session.undeploy()}
+						disabled={session.deploying || session.destroyed}
+						class="w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+					>
+						{session.deploying && session.deployResult?.action === 'undeploy'
+							? 'Tearing down…'
+							: '⏏️ Tear down deployed worker'}
+					</button>
+				{/if}
+
+				{#if session.deployResult}
+					<div
+						data-testid="deploy-result"
+						class="rounded-md border px-2.5 py-2 text-xs {session.deployResult.success
+							? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+							: 'border-red-200 bg-red-50 text-red-700'}"
+					>
+						{#if session.deployResult.action === 'undeploy'}
+							{#if session.deployResult.success}
+								<p>Worker torn down.</p>
+							{:else}
+								<p class="mb-1 font-medium">Teardown failed</p>
+								<pre class="max-h-32 overflow-y-auto whitespace-pre-wrap">{session.deployResult.log}</pre>
+							{/if}
+						{:else if session.deployResult.success && session.deployResult.url}
+							<p>
+								Live at
+								<a
+									href={session.deployResult.url}
+									target="_blank"
+									rel="noreferrer"
+									class="font-medium underline"
+								>
+									{session.deployResult.url}
+								</a>
+							</p>
+						{:else if session.deployResult.success}
+							<p>Deployed, but couldn't find the worker URL in the log.</p>
+						{:else}
+							<p class="mb-1 font-medium">Deploy failed</p>
+							<pre class="max-h-32 overflow-y-auto whitespace-pre-wrap">{session.deployResult.log}</pre>
+						{/if}
+					</div>
+				{/if}
+
 				<button
 					type="button"
 					data-testid="destroy-sandbox"

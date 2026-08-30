@@ -10,6 +10,7 @@ declare global {
 		BETTER_AUTH_URL?: string;
 		RESEND_API_KEY: string;
 		RESEND_FROM_EMAIL: string;
+		OPENAI_API_KEY: string;
 		DAYTONA_API_KEY: string;
 		CLOUDFLARE_API_TOKEN: string;
 		CLOUDFLARE_ACCOUNT_ID: string;

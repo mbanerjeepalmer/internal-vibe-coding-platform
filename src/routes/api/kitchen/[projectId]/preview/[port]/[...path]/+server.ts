@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
+import { requireAppAccess } from '$lib/server/authz';
 
 // Proxies an arbitrary port inside a project's sandbox (e.g. a dev server the
 // agent started) same-origin, the same way the opencode SSE stream is proxied.
@@ -9,13 +10,15 @@ import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 // configured with a matching base path. Good enough for a same-page app or a
 // dev server already configured for a base path; a real reverse-proxy rewriter
 // is future work.
-const proxy: RequestHandler = async ({ params, url, request, fetch }) => {
+const proxy: RequestHandler = async (event) => {
+	const { url, request, fetch, params } = event;
 	const port = Number(params.port);
 	if (!Number.isInteger(port) || port <= 0) {
 		return new Response('invalid port', { status: 400 });
 	}
 
-	const target = await getSandboxProvider().getPreviewUrl(params.projectId, port);
+	const { app } = await requireAppAccess(event);
+	const target = await getSandboxProvider().getPreviewUrl(app.id, port);
 	const upstreamUrl = new URL(`${target.url}/${params.path ?? ''}${url.search}`);
 
 	const upstream = await fetch(upstreamUrl, {
