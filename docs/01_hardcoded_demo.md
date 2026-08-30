@@ -32,3 +32,4 @@ We'll try to build it to be platform-agnostic. But here's the journey we'll want
 
 ## Coding agent notes
 <!--Communicate here with a timestamp at the start of the line and a terse note afterwards. Note you may be working in a worktree so would need to refer back to the home.-->
+2026-08-30: Deploy-first plan agreed (bare SvelteKit -> Cloudflare -> configure domain, before building the full hardcoded journey). Worktree created at ../ivcp-deploy-bootstrap on branch deploy-bootstrap (home repo: internal-vibe-coding-platform, main branch). Scaffolded a minimal SvelteKit + TS project via `npx sv create` (default template, no add-ons yet) directly into the worktree root. Staged but NOT yet committed. Next steps: add Tailwind (`npx sv add tailwindcss`), add `@sveltejs/adapter-cloudflare` + wrangler config, deploy to Cloudflare, then configure the custom domain.
