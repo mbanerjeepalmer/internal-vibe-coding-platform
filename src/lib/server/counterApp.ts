@@ -1,15 +1,32 @@
-import { getSandbox } from '@cloudflare/sandbox';
+import type { Sandbox as DaytonaSandboxHandle } from '@daytona/sdk';
 
-// Stand-in for the real Daytona sandbox from docs/02_real_spec.md while the
-// Daytona API key is pending approval: a real Cloudflare Sandbox container
-// does the "agent's" build work (write files, run `wrangler deploy`), and a
-// real Cloudflare Worker is what ends up live. Nothing here is mocked --
-// only the sandbox provider differs from the eventual Daytona one.
+// Real Daytona sandbox per docs/02_real_spec.md: an isolated container does
+// the "agent's" build work (write files, run `wrangler deploy`), and a real
+// Cloudflare Worker is what ends up live. Nothing here is mocked.
+//
+// One persistent sandbox (tagged with a label, per the pattern already
+// verified live in the opencode-wiring worktree's src/lib/server/opencode/sandbox.ts)
+// is reused across deploy/destroy calls rather than provisioned per call.
+//
+// Two Daytona quirks discovered against a live sandbox, both worked around
+// below rather than being Daytona-side bugs we can fix:
+//   - Passing a `cwd` to `executeCommand` routes through a toolbox code path
+//     that shells out via `/usr/bin/zsh`, which is missing or unusable on
+//     the default snapshot ("fork/exec /usr/bin/zsh: no such file or
+//     directory" / "permission denied"). Never pass `cwd`; `cd <dir> && ...`
+//     inline in the command string instead.
+//   - Sandboxes sit behind a domain-allowlisting egress proxy (HTTPS to a
+//     non-listed domain gets a mid-handshake connection reset, not a clean
+//     block) that by default doesn't include Cloudflare's API. `domainAllowList`
+//     replaces rather than extends the default list, so it must include npm's
+//     registry too (needed for `npx wrangler` itself) alongside Cloudflare's.
 
-const SANDBOX_ID = 'ivcp-counter-sandbox';
-const WORKDIR = '/workspace/counter-app';
+const SANDBOX_LABEL = { 'vibe-app': 'ivcp-counter' };
+const WORKDIR = '/home/daytona/counter-app';
 const WORKER_NAME = 'ivcp-counter-demo';
 const WRANGLER_VERSION = '4.127.1';
+const DOMAIN_ALLOW_LIST =
+	'api.cloudflare.com,*.cloudflare.com,workers.dev,*.workers.dev,registry.npmjs.org,*.npmjs.org';
 
 const INDEX_JS = `export class Counter {
 	constructor(state) {
@@ -87,10 +104,38 @@ interface RunResult {
 	log: string;
 }
 
-async function ensureFiles(sandbox: ReturnType<typeof getSandbox>) {
-	await sandbox.mkdir(WORKDIR, { recursive: true });
-	await sandbox.writeFile(`${WORKDIR}/index.js`, INDEX_JS);
-	await sandbox.writeFile(`${WORKDIR}/wrangler.jsonc`, WRANGLER_JSONC);
+interface DaytonaProcess {
+	executeCommand(
+		command: string,
+		cwd?: string,
+		env?: Record<string, string>,
+		timeout?: number
+	): Promise<{ exitCode?: number | null; result?: string }>;
+}
+
+async function getOrCreateSandbox(env: Env): Promise<DaytonaSandboxHandle> {
+	const { Daytona } = await import('@daytona/sdk');
+	const daytona = new Daytona({ apiKey: env.DAYTONA_API_KEY });
+
+	for await (const candidate of daytona.list({ labels: SANDBOX_LABEL })) {
+		if (candidate.state !== 'started') await daytona.start(candidate, 60);
+		return candidate;
+	}
+	return daytona.create(
+		{ labels: SANDBOX_LABEL, domainAllowList: DOMAIN_ALLOW_LIST },
+		{ timeout: 90 }
+	);
+}
+
+async function ensureFiles(sandbox: { process: DaytonaProcess }) {
+	const escapedIndex = INDEX_JS.replace(/'/g, `'\\''`);
+	const escapedWrangler = WRANGLER_JSONC.replace(/'/g, `'\\''`);
+	const result = await sandbox.process.executeCommand(
+		`mkdir -p ${WORKDIR} && printf '%s' '${escapedIndex}' > ${WORKDIR}/index.js && printf '%s' '${escapedWrangler}' > ${WORKDIR}/wrangler.jsonc`
+	);
+	if (result.exitCode !== 0) {
+		throw new Error(`writing counter app files into the Daytona sandbox failed:\n${result.result}`);
+	}
 }
 
 function cfCreds(env: Env) {
@@ -101,23 +146,27 @@ function cfCreds(env: Env) {
 }
 
 export async function deployCounterApp(env: Env): Promise<RunResult & { url?: string }> {
-	const sandbox = getSandbox(env.Sandbox, SANDBOX_ID);
+	const sandbox = await getOrCreateSandbox(env);
 	await ensureFiles(sandbox);
-	const result = await sandbox.exec(`npx --yes wrangler@${WRANGLER_VERSION} deploy`, {
-		cwd: WORKDIR,
-		env: cfCreds(env)
-	});
-	const log = result.stdout + result.stderr;
+	const result = await sandbox.process.executeCommand(
+		`cd ${WORKDIR} && npx --yes wrangler@${WRANGLER_VERSION} deploy`,
+		undefined,
+		cfCreds(env),
+		120
+	);
+	const log = result.result ?? '';
 	const url = log.match(/https:\/\/\S+\.workers\.dev/)?.[0];
-	return { success: result.success, log, url };
+	return { success: result.exitCode === 0, log, url };
 }
 
 export async function destroyCounterApp(env: Env): Promise<RunResult> {
-	const sandbox = getSandbox(env.Sandbox, SANDBOX_ID);
+	const sandbox = await getOrCreateSandbox(env);
 	await ensureFiles(sandbox);
-	const result = await sandbox.exec(`npx --yes wrangler@${WRANGLER_VERSION} delete --force`, {
-		cwd: WORKDIR,
-		env: cfCreds(env)
-	});
-	return { success: result.success, log: result.stdout + result.stderr };
+	const result = await sandbox.process.executeCommand(
+		`cd ${WORKDIR} && npx --yes wrangler@${WRANGLER_VERSION} delete --force`,
+		undefined,
+		cfCreds(env),
+		120
+	);
+	return { success: result.exitCode === 0, log: result.result ?? '' };
 }
