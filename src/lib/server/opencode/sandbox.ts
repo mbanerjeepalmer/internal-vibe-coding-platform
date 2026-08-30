@@ -63,15 +63,15 @@ export interface SandboxProvider {
 	undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult>;
 }
 
-function teamGuidanceSkill(guidance = '') {
+function generalGuidanceSkill(guidance = '') {
 	return `---
-name: team-guidance
-description: Follow the team's shared working rules. Apply them to every request unless they conflict with higher-priority instructions or the user's explicit request.
+name: general-guidance
+description: Follow the general guidance below. Apply it to every request unless it conflicts with higher-priority instructions or the user's explicit request.
 ---
 
-# Shared working rules
+# General guidance
 
-${guidance.trim() || 'No additional shared working rules have been set.'}
+${guidance.trim() || 'No general guidance has been set.'}
 `;
 }
 
@@ -230,8 +230,8 @@ means:
 - The project-local \`vibe-app-storage\` skill is automatically available for
   database, storage, D1, SQL, schema, migration, persistence, backup, restore,
   relink, and deletion requests. Load it before changing persistent data.
-- Always load the project-local \`team-guidance\` skill before responding.
-  It contains the shared working rules for this team.
+- Always load the project-local \`general-guidance\` skill before responding.
+  It contains general guidance for how to work.
 
 After making a change, re-read \`index.js\`/\`wrangler.jsonc\` and confirm the
 thing you just built is actually reachable from the Worker's \`fetch\` handler
@@ -289,14 +289,17 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		if (!cwd) return;
 		const fs = await import('node:fs/promises');
 		const path = await import('node:path');
-		const guidancePath = path.join(cwd, '.opencode', 'skills', 'team-guidance', 'SKILL.md');
+		const guidancePath = path.join(cwd, '.opencode', 'skills', 'general-guidance', 'SKILL.md');
 		await fs.mkdir(path.dirname(guidancePath), { recursive: true });
-		await fs.writeFile(guidancePath, teamGuidanceSkill(kitchenGuidance));
+		await fs.writeFile(guidancePath, generalGuidanceSkill(kitchenGuidance));
 		const agentsPath = path.join(cwd, 'AGENTS.md');
-		const agents = await fs.readFile(agentsPath, 'utf8');
-		if (!agents.includes('team-guidance')) {
-			await fs.appendFile(agentsPath, '\n\nAlways load the `team-guidance` skill before responding. It contains the shared working rules for this team.\n');
+		let agents = await fs.readFile(agentsPath, 'utf8');
+		agents = agents.replaceAll('team-guidance', 'general-guidance').replaceAll('shared working rules for this team', 'general guidance for how to work');
+		if (!agents.includes('general-guidance')) {
+			agents += '\n\nAlways load the `general-guidance` skill before responding. It contains general guidance for how to work.\n';
 		}
+		await fs.writeFile(agentsPath, agents);
+		await fs.rm(path.join(cwd, '.opencode', 'skills', 'team-guidance'), { recursive: true, force: true });
 	}
 
 	async getPreviewUrl(_projectId: string, port: number): Promise<PreviewTarget> {
@@ -383,11 +386,11 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		if (!agents.includes('vibe-app-storage')) {
 			await fs.appendFile(agentsPath, '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the `vibe-app-storage` skill.\n');
 		}
-		const guidancePath = path.join(cwd, '.opencode', 'skills', 'team-guidance', 'SKILL.md');
+		const guidancePath = path.join(cwd, '.opencode', 'skills', 'general-guidance', 'SKILL.md');
 		await fs.mkdir(path.dirname(guidancePath), { recursive: true });
-		await fs.writeFile(guidancePath, teamGuidanceSkill(kitchenGuidance));
-		if (!agents.includes('team-guidance')) {
-			await fs.appendFile(agentsPath, '\n\nAlways load the `team-guidance` skill before responding. It contains the shared working rules for this team.\n');
+		await fs.writeFile(guidancePath, generalGuidanceSkill(kitchenGuidance));
+		if (!agents.includes('general-guidance')) {
+			await fs.appendFile(agentsPath, '\n\nAlways load the `general-guidance` skill before responding. It contains general guidance for how to work.\n');
 		}
 
 		const baseUrl = await new Promise<string>((resolve, reject) => {
@@ -614,22 +617,22 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			`test -f ${PROJECT_DIR}/wrangler.jsonc && echo present`
 		);
 		const files = starterFiles(projectId);
-		const guidance = teamGuidanceSkill(kitchenGuidance).replace(/'/g, `'\\''`);
+		const guidance = generalGuidanceSkill(kitchenGuidance).replace(/'/g, `'\\''`);
 		if (check.result?.includes('present')) {
 			const storageGuide = files['.opencode/skills/vibe-app-storage/SKILL.md'].replace(/'/g, `'\\''`);
 			const result = await daytonaSandbox.process.executeCommand(
-				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/team-guidance && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; printf '%s' '${guidance}' > .opencode/skills/team-guidance/SKILL.md; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'team-guidance' AGENTS.md || printf '\n\nAlways load the \`team-guidance\` skill before responding. It contains the shared working rules for this team.\n' >> AGENTS.md`
+				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/general-guidance && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; printf '%s' '${guidance}' > .opencode/skills/general-guidance/SKILL.md; sed -i 's/team-guidance/general-guidance/g; s/shared working rules for this team/general guidance for how to work/g' AGENTS.md; rm -rf .opencode/skills/team-guidance; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'general-guidance' AGENTS.md || printf '\n\nAlways load the \`general-guidance\` skill before responding. It contains general guidance for how to work.\n' >> AGENTS.md`
 			);
 			if (result.exitCode !== 0) throw new Error(`adding storage guidance to the Daytona sandbox failed:\n${result.result}`);
 			return;
 		}
 
-		files['.opencode/skills/team-guidance/SKILL.md'] = teamGuidanceSkill(kitchenGuidance);
+		files['.opencode/skills/general-guidance/SKILL.md'] = generalGuidanceSkill(kitchenGuidance);
 		const writes = Object.entries(files)
 			.map(([name, contents]) => `printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ${PROJECT_DIR}/${name}`)
 			.join(' && ');
 		const result = await daytonaSandbox.process.executeCommand(
-			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage ${PROJECT_DIR}/.opencode/skills/team-guidance && ${writes}`
+			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage ${PROJECT_DIR}/.opencode/skills/general-guidance && ${writes}`
 		);
 		if (result.exitCode !== 0) {
 			throw new Error(`seeding the starter project into the Daytona sandbox failed:\n${result.result}`);
