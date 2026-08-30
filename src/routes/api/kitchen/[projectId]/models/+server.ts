@@ -6,7 +6,7 @@ import { requireAppAccess } from '$lib/server/authz';
 
 export const GET: RequestHandler = async (event) => {
 	const { app } = await requireAppAccess(event);
-	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id);
+	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, app.agentGuidance);
 	const models = await listModels(sandbox);
 
 	// Precedence: the Kitchen's Head-Chef-set override, then the platform

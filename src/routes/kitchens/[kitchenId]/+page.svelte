@@ -5,6 +5,7 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let showCreateApp = $state(false);
+	let guidance = $state(data.kitchen.agentGuidance ?? '');
 </script>
 
 <div class="min-h-screen bg-stone-50">
@@ -92,6 +93,33 @@
 					</li>
 				{/each}
 			</ul>
+		</section>
+
+		<section class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+			<h2 class="text-base font-semibold text-stone-900">Agent rules</h2>
+			<p class="mt-1 text-sm text-stone-600">These rules are shared by every app in this Kitchen.</p>
+			{#if data.kitchen.role === 'head_chef'}
+				<form method="POST" action="?/saveGuidance" use:enhance class="mt-4 space-y-3">
+					<textarea
+						bind:value={guidance}
+						name="guidance"
+						maxlength="12000"
+						rows="10"
+						placeholder="For non-technical users: work out sensible next steps, ask only essential questions, and explain changes in plain English."
+						class="w-full rounded-md border border-stone-300 p-3 text-sm text-stone-800"
+					></textarea>
+					<button
+						type="submit"
+						class="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800"
+					>
+						Save rules
+					</button>
+				</form>
+			{:else}
+				<p class="mt-4 rounded-md bg-stone-50 p-3 text-sm text-stone-600">
+					Only the Head Chef can change these rules.
+				</p>
+			{/if}
 		</section>
 	</div>
 </div>

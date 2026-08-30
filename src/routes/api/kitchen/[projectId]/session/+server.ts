@@ -11,7 +11,7 @@ export const POST: RequestHandler = async (event) => {
 	// OpenCode conversation. Reopening the App therefore resumes its timeline.
 	if (app.opencodeSessionId) return json({ sessionId: app.opencodeSessionId });
 
-	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id);
+	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, app.agentGuidance);
 	const session = await createSession(sandbox);
 
 	const body = (await event.request.json().catch(() => ({}))) as { model?: ModelRef };

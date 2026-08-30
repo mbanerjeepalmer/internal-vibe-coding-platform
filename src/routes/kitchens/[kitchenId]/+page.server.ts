@@ -4,11 +4,14 @@ import {
 	createApp,
 	getKitchenAccess,
 	listApps,
-	listKitchenMembers
+	listKitchenMembers,
+	setKitchenAgentGuidance
 } from '$lib/server/control-plane';
 
+const MAX_GUIDANCE_LENGTH = 12_000;
+
 function db(platform: App.Platform | undefined) {
-	if (!platform?.env.DB) throw new Error('Cloudflare D1 is required for the control plane.');
+	if (!platform?.env.DB) throw error(500, 'Cloudflare D1 is required for the control plane.');
 	return platform.env.DB;
 }
 
@@ -40,5 +43,19 @@ export const actions: Actions = {
 			return fail(400, { message: err instanceof Error ? err.message : String(err) });
 		}
 		redirect(303, `/apps/${appId}`);
+	},
+
+	saveGuidance: async ({ request, locals, platform, params }) => {
+		if (!locals.user) return fail(401, { message: 'Sign in first.' });
+		const guidance = String((await request.formData()).get('guidance') ?? '').trim();
+		if (guidance.length > MAX_GUIDANCE_LENGTH) {
+			return fail(400, { message: `Guidance must be ${MAX_GUIDANCE_LENGTH} characters or fewer.` });
+		}
+		try {
+			await setKitchenAgentGuidance(db(platform), locals.user.id, params.kitchenId, guidance);
+		} catch (cause) {
+			return fail(403, { message: cause instanceof Error ? cause.message : String(cause) });
+		}
+		return { success: true };
 	}
 };
