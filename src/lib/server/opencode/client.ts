@@ -59,6 +59,33 @@ export async function listModels(target: Target): Promise<ModelSummary[]> {
 	}));
 }
 
+/**
+ * Precedence: the Kitchen's Head-Chef-set override, then the platform default
+ * (Luna), then a best-effort fallback for a sandbox where neither is actually
+ * available (e.g. local dev — see sandbox.ts). Shared by the /models route
+ * (to show the picker's initial selection) and session creation (to pick the
+ * model a brand-new session actually switches to) — the latter must resolve
+ * this itself rather than trust a client-supplied model, since the client's
+ * own /models fetch can race a still-cold-starting sandbox and come back
+ * empty, and a session's model is locked in for the App's whole shared
+ * lifetime (see session/+server.ts's `if (app.opencodeSessionId) return`).
+ */
+export function resolveDefaultModel(
+	models: ModelSummary[],
+	appDefault: { defaultModelId: string | null; defaultModelProviderId: string | null }
+): ModelSummary | null {
+	const find = (id: string | null, providerID: string | null) =>
+		id && providerID ? models.find((m) => m.id === id && m.providerID === providerID) : undefined;
+	return (
+		find(appDefault.defaultModelId, appDefault.defaultModelProviderId) ??
+		find(DEFAULT_MODEL.id, DEFAULT_MODEL.providerID) ??
+		models.find((m) => m.providerID === 'openai') ??
+		models.find((m) => m.free) ??
+		models[0] ??
+		null
+	);
+}
+
 export async function switchModel(target: Target, sessionId: string, model: ModelRef) {
 	await req(target, `/api/session/${sessionId}/model`, {
 		method: 'POST',
