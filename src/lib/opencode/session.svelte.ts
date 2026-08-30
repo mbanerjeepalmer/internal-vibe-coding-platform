@@ -49,6 +49,8 @@ export class OpencodeSession {
 	model = $state<ModelSummary | null>(null);
 	pendingPermissions = $state<PermissionRequest[]>([]);
 	destroyed = $state(false);
+	deploying = $state(false);
+	deployResult = $state<{ success: boolean; log: string; url?: string } | null>(null);
 
 	sessionId: string | null = null;
 	private itemIndex = new Map<string, number>();
@@ -103,6 +105,19 @@ export class OpencodeSession {
 			}
 		);
 		this.pendingPermissions = this.pendingPermissions.filter((p) => p.id !== requestId);
+	}
+
+	async deploy() {
+		this.deploying = true;
+		this.deployResult = null;
+		try {
+			const res = await fetch(`/api/kitchen/${this.projectId}/deploy`, { method: 'POST' });
+			this.deployResult = (await res.json()) as { success: boolean; log: string; url?: string };
+		} catch (err) {
+			this.deployResult = { success: false, log: err instanceof Error ? err.message : String(err) };
+		} finally {
+			this.deploying = false;
+		}
 	}
 
 	async destroySandbox() {

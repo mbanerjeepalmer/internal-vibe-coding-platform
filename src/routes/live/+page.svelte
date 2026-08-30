@@ -113,7 +113,45 @@
 				</select>
 			{/if}
 
-			<div class="mt-auto pt-4">
+			<div class="mt-auto space-y-2 pt-4">
+				<button
+					type="button"
+					data-testid="deploy-project"
+					onclick={() => session.deploy()}
+					disabled={session.deploying || session.destroyed}
+					class="w-full rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+				>
+					{session.deploying ? 'Deploying…' : '🚀 Deploy to Cloudflare'}
+				</button>
+
+				{#if session.deployResult}
+					<div
+						data-testid="deploy-result"
+						class="rounded-md border px-2.5 py-2 text-xs {session.deployResult.success
+							? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+							: 'border-red-200 bg-red-50 text-red-700'}"
+					>
+						{#if session.deployResult.success && session.deployResult.url}
+							<p>
+								Live at
+								<a
+									href={session.deployResult.url}
+									target="_blank"
+									rel="noreferrer"
+									class="font-medium underline"
+								>
+									{session.deployResult.url}
+								</a>
+							</p>
+						{:else if session.deployResult.success}
+							<p>Deployed, but couldn't find the worker URL in the log.</p>
+						{:else}
+							<p class="mb-1 font-medium">Deploy failed</p>
+							<pre class="max-h-32 overflow-y-auto whitespace-pre-wrap">{session.deployResult.log}</pre>
+						{/if}
+					</div>
+				{/if}
+
 				<button
 					type="button"
 					data-testid="destroy-sandbox"
