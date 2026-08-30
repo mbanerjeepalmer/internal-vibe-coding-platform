@@ -3,14 +3,12 @@
 	import ChatMessage from '$lib/components/ChatMessage.svelte';
 	import ToolCall from '$lib/components/ToolCall.svelte';
 	import Composer from '$lib/components/Composer.svelte';
-	import { page } from '$app/state';
 	import { OpencodeSession, type PromptFile } from '$lib/opencode/session.svelte';
+	import type { PageData } from './$types';
 
-	// One opencode session per project; defaults to a single demo project until
-	// the real Kitchen/project model lands (see docs/01_hardcoded_demo.md).
-	// `?project=` override exists for local testing against a specific sandbox.
-	const projectId = page.url.searchParams.get('project') ?? 'demo-project';
-	const session = new OpencodeSession(projectId);
+	let { data }: { data: PageData } = $props();
+
+	const session = new OpencodeSession(data.app.id);
 	let composerValue = $state('');
 	let ready = $state(false);
 	let initError = $state<string | null>(null);
@@ -68,7 +66,7 @@
 	function openPreview() {
 		const port = Number(previewPort);
 		if (!Number.isInteger(port) || port <= 0) return;
-		previewSrc = `/api/kitchen/${projectId}/preview/${port}/`;
+		previewSrc = `/api/kitchen/${data.app.id}/preview/${port}/`;
 		panelTab = 'preview';
 	}
 
@@ -81,18 +79,22 @@
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
-	<TopBar name="Alexandra" role="Chef" />
+	<TopBar
+		kitchenName={data.app.kitchenName}
+		name={data.user.name || data.user.email}
+		role={data.app.role === 'head_chef' ? 'Head Chef' : 'Chef'}
+	/>
 
 	<div class="flex flex-1 overflow-hidden">
 		<aside class="hidden w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/60 p-3 md:flex">
 			<p class="mb-2 px-2 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">
-				Sessions
+				App
 			</p>
 			<div class="flex items-center gap-2 rounded-lg bg-white px-2.5 py-2 text-sm shadow-sm">
 				<span
 					class="h-1.5 w-1.5 shrink-0 rounded-full {session.busy ? 'bg-blue-500' : 'bg-emerald-500'}"
 				></span>
-				<span class="truncate text-slate-700">opencode live session</span>
+				<span class="truncate text-slate-700">{data.app.name}</span>
 			</div>
 
 			{#if session.models.length > 0}
