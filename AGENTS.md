@@ -33,19 +33,40 @@ OpenCode/Daytona workspace.
   add secret values to `wrangler.jsonc`, `.dev.vars`, commits, or terminal
   output.
 
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push and PR:
+
+- `check` job: `npm ci`, `npm run check`, `npm run build`. Runs for every push
+  and PR, including `main`.
+- `deploy` job: only on a push to `main` (not PRs), after `check` passes.
+  Applies pending D1 migrations with
+  `npx wrangler d1 migrations apply ivcp-control-plane --remote`, then runs
+  `npx wrangler deploy`. Requires the `CLOUDFLARE_API_TOKEN` and
+  `CLOUDFLARE_ACCOUNT_ID` repository secrets (Settings → Secrets and
+  variables → Actions) — same values as the `.dev.vars`/Worker secrets of the
+  same name, added there separately since Actions can't read Worker secrets.
+
+This means **a push to `main` deploys to `https://vibe.kitchen` automatically
+once the checks pass** — there is no separate manual release step. Land
+changes through a branch/PR when you want checks to run before they reach
+`main`.
+
 ## Normal development loop
 
 1. Inspect the current Git status and preserve unrelated user changes.
 2. Run `npm ci` after a lockfile change or in a fresh worktree.
-3. Run `npm run check` and `npm run build` before proposing a deployment.
+3. Run `npm run check` and `npm run build` before pushing — CI runs the same
+   checks, but catching failures locally avoids a red `main` build.
 4. Add each D1 schema change as the next numbered SQL file in `migrations/`.
-   Apply it locally first where practical; apply production migrations with
-   `npx wrangler d1 migrations apply ivcp-control-plane --remote` only when the
-   schema is ready to ship.
+   Apply it locally first where practical; production migrations are applied
+   automatically by CI on push to `main` (see CI/CD above) — do not also run
+   `wrangler d1 migrations apply --remote` by hand against `main`'s state
+   unless CI is broken.
 5. Regenerate Worker bindings after `wrangler.jsonc` changes with
    `npx wrangler types` and commit `worker-configuration.d.ts` if it changes.
-6. For a release, run `npx wrangler deploy`, then make a read-only request to
-   the affected `https://vibe.kitchen` route to verify it.
+6. After a push to `main` deploys, make a read-only request to the affected
+   `https://vibe.kitchen` route to verify it.
 
 ## Instructing the agent that builds Kitchen apps
 
