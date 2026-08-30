@@ -12,6 +12,9 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "playwright test"
 	},
+	"dependencies": {
+		"@daytona/sdk": "^0.207.0"
+	},
 	"devDependencies": {
 		"@playwright/test": "^1.62.1",
 		"@sveltejs/adapter-cloudflare": "^7.2.9",

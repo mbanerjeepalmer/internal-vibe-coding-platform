@@ -12,6 +12,22 @@
 			<p class="text-sm text-stone-500">Your kitchen's chefs</p>
 		</div>
 
+		<div>
+			<h2 class="text-sm font-semibold text-stone-900">Apps</h2>
+			<ul class="mt-2 flex flex-col gap-3">
+				<li>
+					<a
+						href="/dashboard/apps/counter"
+						data-testid="app-counter"
+						class="block rounded-lg border border-stone-200 bg-white p-4 hover:border-amber-300"
+					>
+						<p class="text-sm font-semibold text-stone-900">Counter</p>
+						<p class="text-xs text-stone-500">v0.2.1 real build/deploy/destroy proof of concept</p>
+					</a>
+				</li>
+			</ul>
+		</div>
+
 		<ul class="flex flex-col gap-3">
 			{#each chefs as chef (chef.slug)}
 				<li>
