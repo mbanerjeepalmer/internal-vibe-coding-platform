@@ -97,8 +97,13 @@ const DAYTONA_SNAPSHOT = `vibe-kitchen-opencode-${OPENCODE_VERSION}`;
 // default allowlist doesn't include Cloudflare's API. `domainAllowList`
 // replaces rather than extends the default list, so it must also keep npm's
 // registry (needed for `npx wrangler` itself, and opencode's own install).
+// It also needs opencode's own "zen" gateway (https://opencode.ai/zen/v1/...,
+// per https://opencode.ai/docs/zen/) — every non-Luna model in the picker
+// (all the "Free" ones, plus the paid non-OpenAI ones) is served from
+// opencode.ai, not OpenAI directly, so without this every one of those
+// models fails every prompt.
 const DOMAIN_ALLOW_LIST =
-	'api.cloudflare.com,*.cloudflare.com,workers.dev,*.workers.dev,api.openai.com,registry.npmjs.org,*.npmjs.org';
+	'api.cloudflare.com,*.cloudflare.com,workers.dev,*.workers.dev,api.openai.com,opencode.ai,*.opencode.ai,registry.npmjs.org,*.npmjs.org';
 
 /**
  * A minimal Workers project seeded into the agent's working directory before
