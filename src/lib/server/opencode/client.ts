@@ -57,17 +57,30 @@ export async function switchModel(target: Target, sessionId: string, model: Mode
 	});
 }
 
+export interface PromptFile {
+	/** `data:<mime>;base64,...` or `file://...` — see docs/01_hardcoded_demo.md's
+	 * attachment findings: opencode forwards this as a multimodal content part to
+	 * the model itself, so it only works with a model whose capabilities include
+	 * the attached media type (verified live: a `text/plain` file fails against
+	 * every free model tried, image/video attachments are structurally the same
+	 * path but untested against a working model in this environment). */
+	uri: string;
+	mime: string;
+	name: string;
+}
+
 export async function sendPrompt(
 	target: Target,
 	sessionId: string,
-	text: string
+	text: string,
+	files?: PromptFile[]
 ): Promise<{ id: string; admittedSeq: number }> {
 	const { data } = await req<{ data: { id: string; admittedSeq: number } }>(
 		target,
 		`/api/session/${sessionId}/prompt`,
 		{
 			method: 'POST',
-			body: JSON.stringify({ prompt: { text } })
+			body: JSON.stringify({ prompt: { text, files: files?.length ? files : undefined } })
 		}
 	);
 	return data;
@@ -75,6 +88,32 @@ export async function sendPrompt(
 
 export async function interruptSession(target: Target, sessionId: string) {
 	await req(target, `/api/session/${sessionId}/interrupt`, { method: 'POST' });
+}
+
+export interface PermissionRequest {
+	id: string;
+	action: string;
+	resources: string[];
+}
+
+export async function listPermissions(target: Target, sessionId: string): Promise<PermissionRequest[]> {
+	const { data } = await req<{ data: PermissionRequest[] }>(
+		target,
+		`/api/session/${sessionId}/permission`
+	);
+	return data;
+}
+
+export async function replyPermission(
+	target: Target,
+	sessionId: string,
+	requestId: string,
+	reply: 'once' | 'always' | 'reject'
+) {
+	await req(target, `/api/session/${sessionId}/permission/${requestId}/reply`, {
+		method: 'POST',
+		body: JSON.stringify({ reply })
+	});
 }
 
 /**

@@ -23,6 +23,18 @@ export interface ModelSummary extends ModelRef {
 	free?: boolean;
 }
 
+export interface PermissionRequest {
+	id: string;
+	action: string;
+	resources: string[];
+}
+
+export interface PromptFile {
+	uri: string;
+	mime: string;
+	name: string;
+}
+
 /**
  * Drives the chat timeline off opencode's durable per-session SSE stream.
  * One class instance == one opencode session's live view. Reconnects with
@@ -35,12 +47,15 @@ export class OpencodeSession {
 	connected = $state(false);
 	models = $state<ModelSummary[]>([]);
 	model = $state<ModelSummary | null>(null);
+	pendingPermissions = $state<PermissionRequest[]>([]);
+	destroyed = $state(false);
 
 	sessionId: string | null = null;
 	private itemIndex = new Map<string, number>();
 	private lastSeq = 0;
 	private eventSource: EventSource | null = null;
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	private permissionPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	constructor(private projectId: string) {}
 
@@ -58,6 +73,42 @@ export class OpencodeSession {
 		const { sessionId } = (await sessionRes.json()) as { sessionId: string };
 		this.sessionId = sessionId;
 		this.connect();
+
+		// opencode doesn't durably-event permission requests, so we poll for
+		// them — see the note in the server-side permission route.
+		this.permissionPollTimer = setInterval(() => this.pollPermissions(), 1500);
+	}
+
+	private async pollPermissions() {
+		if (!this.sessionId || this.destroyed) return;
+		try {
+			const res = await fetch(
+				`/api/kitchen/${this.projectId}/session/${this.sessionId}/permission`
+			);
+			const { permissions } = (await res.json()) as { permissions: PermissionRequest[] };
+			this.pendingPermissions = permissions;
+		} catch {
+			// Transient — next poll will retry.
+		}
+	}
+
+	async replyPermission(requestId: string, reply: 'once' | 'always' | 'reject') {
+		if (!this.sessionId) return;
+		await fetch(
+			`/api/kitchen/${this.projectId}/session/${this.sessionId}/permission/${requestId}/reply`,
+			{
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ reply })
+			}
+		);
+		this.pendingPermissions = this.pendingPermissions.filter((p) => p.id !== requestId);
+	}
+
+	async destroySandbox() {
+		this.dispose();
+		await fetch(`/api/kitchen/${this.projectId}`, { method: 'DELETE' });
+		this.destroyed = true;
 	}
 
 	private connect() {
@@ -84,12 +135,12 @@ export class OpencodeSession {
 		};
 	}
 
-	async sendPrompt(text: string) {
-		if (!this.sessionId || !text.trim()) return;
+	async sendPrompt(text: string, files?: PromptFile[]) {
+		if (!this.sessionId || (!text.trim() && !files?.length)) return;
 		await fetch(`/api/kitchen/${this.projectId}/session/${this.sessionId}/prompt`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ text })
+			body: JSON.stringify({ text, files })
 		});
 	}
 
@@ -106,6 +157,7 @@ export class OpencodeSession {
 	dispose() {
 		this.eventSource?.close();
 		if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+		if (this.permissionPollTimer) clearInterval(this.permissionPollTimer);
 	}
 
 	private upsert(item: TimelineItem) {

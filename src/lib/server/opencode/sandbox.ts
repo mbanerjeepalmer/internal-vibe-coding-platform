@@ -8,6 +8,7 @@
 // which one is in play.
 
 import { env } from '$env/dynamic/private';
+import type { Sandbox as DaytonaSandboxHandle } from '@daytona/sdk';
 
 export interface Sandbox {
 	projectId: string;
@@ -17,8 +18,18 @@ export interface Sandbox {
 	headers?: Record<string, string>;
 }
 
+/** A URL (+ any headers needed to reach it) for an arbitrary port inside a sandbox — e.g. a dev server the agent started. */
+export interface PreviewTarget {
+	url: string;
+	headers?: Record<string, string>;
+}
+
 export interface SandboxProvider {
 	getOrCreateSandbox(projectId: string): Promise<Sandbox>;
+	/** Resolves an arbitrary port inside a project's sandbox to a reachable URL. Sandbox must already exist. */
+	getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget>;
+	/** Tears the project's sandbox down entirely (the "hard delete this app" flow in docs/01_hardcoded_demo.md). */
+	destroySandbox(projectId: string): Promise<void>;
 }
 
 // The version we traced opencode's v2 API against (docs/03_opencode_backend_spec.md's
@@ -29,6 +40,7 @@ const OPENCODE_PORT = 4096;
 
 class LocalProcessSandboxProvider implements SandboxProvider {
 	private sandboxes = new Map<string, Promise<Sandbox>>();
+	private children = new Map<string, import('node:child_process').ChildProcess>();
 
 	getOrCreateSandbox(projectId: string): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
@@ -38,6 +50,18 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 			existing.catch(() => this.sandboxes.delete(projectId));
 		}
 		return existing;
+	}
+
+	async getPreviewUrl(_projectId: string, port: number): Promise<PreviewTarget> {
+		// The local sandbox is just a subprocess on this machine, so any dev
+		// server the agent starts is already reachable directly — no tunnel needed.
+		return { url: `http://127.0.0.1:${port}` };
+	}
+
+	async destroySandbox(projectId: string): Promise<void> {
+		this.children.get(projectId)?.kill();
+		this.children.delete(projectId);
+		this.sandboxes.delete(projectId);
 	}
 
 	private async spawn(projectId: string): Promise<Sandbox> {
@@ -55,6 +79,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				env: { ...process.env }
 			});
+			this.children.set(projectId, child);
 
 			let settled = false;
 			const timeout = setTimeout(() => {
@@ -86,6 +111,7 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 			});
 			child.on('exit', (code) => {
 				this.sandboxes.delete(projectId);
+				this.children.delete(projectId);
 				if (!settled) {
 					settled = true;
 					clearTimeout(timeout);
@@ -118,6 +144,9 @@ class LocalProcessSandboxProvider implements SandboxProvider {
  */
 class DaytonaSandboxProvider implements SandboxProvider {
 	private sandboxes = new Map<string, Promise<Sandbox>>();
+	// The raw Daytona SDK sandbox object per project, kept alongside `sandboxes`
+	// so `getPreviewUrl`/`destroySandbox` don't need to re-look-it-up by label.
+	private raw = new Map<string, DaytonaSandboxHandle>();
 	private daytonaPromise: ReturnType<typeof this.makeClient> | undefined;
 
 	constructor(private apiKey: string) {}
@@ -142,11 +171,29 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return existing;
 	}
 
+	async getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget> {
+		await this.getOrCreateSandbox(projectId);
+		const daytonaSandbox = this.raw.get(projectId);
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+		const preview = await daytonaSandbox.getPreviewLink(port);
+		return { url: preview.url, headers: { 'x-daytona-preview-token': preview.token } };
+	}
+
+	async destroySandbox(projectId: string): Promise<void> {
+		const daytona = await this.client();
+		const label = { 'vibe-project': projectId };
+		for await (const candidate of daytona.list({ labels: label })) {
+			await daytona.delete(candidate, 60, true);
+		}
+		this.sandboxes.delete(projectId);
+		this.raw.delete(projectId);
+	}
+
 	private async provision(projectId: string): Promise<Sandbox> {
 		const daytona = await this.client();
 		const label = { 'vibe-project': projectId };
 
-		let daytonaSandbox;
+		let daytonaSandbox: DaytonaSandboxHandle | undefined;
 		for await (const candidate of daytona.list({ labels: label })) {
 			daytonaSandbox = candidate;
 			break;
@@ -156,6 +203,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		} else if (daytonaSandbox.state !== 'started') {
 			await daytona.start(daytonaSandbox, 60);
 		}
+		this.raw.set(projectId, daytonaSandbox);
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
 
@@ -224,7 +272,8 @@ class DaytonaSandboxProvider implements SandboxProvider {
 	}
 }
 
-// Structural type so sandbox.ts doesn't need the SDK's full Process class import.
+// Structural type so the private helper methods above don't need to import
+// the SDK's full Process class just to be typed.
 interface DaytonaProcess {
 	executeCommand(
 		command: string,
