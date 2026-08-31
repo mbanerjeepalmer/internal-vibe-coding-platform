@@ -13,6 +13,7 @@ import {
 } from '$lib/server/control-plane';
 import { sendInvitationEmail } from '$lib/server/mail';
 import { reconcileSandboxStates } from '$lib/server/opencode/sandbox';
+import { isExecutiveChef } from '$lib/server/executive';
 
 function db(platform: App.Platform | undefined) {
 	if (!platform?.env.DB) throw new Error('Cloudflare D1 is required for the control plane.');
@@ -41,7 +42,8 @@ export const load: PageServerLoad = async ({ locals, platform, url }) => {
 		role,
 		kitchens,
 		apps,
-		pendingInvitations
+		pendingInvitations,
+		isExecutiveChef: await isExecutiveChef(database, locals.user.id)
 	};
 };
 

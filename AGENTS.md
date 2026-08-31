@@ -35,6 +35,22 @@ OpenCode/Daytona workspace.
   add secret values to `wrangler.jsonc`, `.dev.vars`, commits, or terminal
   output.
 
+## Executive Chef (instance-wide superadmin)
+
+`platform_admins` (see `migrations/0006_executive_chef.sql`) grants raw-SQL
+and any-App-sandbox-bash access via `/executive` — for the class of fix that
+used to need an engineer hand-writing a one-off migration (e.g. clearing a
+wedged `apps.opencode_session_id`). Every invocation is logged to
+`admin_actions` with a required comment (or an explicit `force` to skip it).
+There is no UI path to create the first Executive Chef — bootstrap one with:
+
+```
+npx wrangler d1 execute ivcp-control-plane --remote --command "INSERT INTO platform_admins (user_id, granted_by, created_at) SELECT id, id, datetime('now') FROM \"user\" WHERE email = 'someone@example.com'"
+```
+
+Once at least one exists, further grants/revokes happen from `/executive`
+itself.
+
 ## CI/CD
 
 `.github/workflows/ci.yml` runs on every push and PR:

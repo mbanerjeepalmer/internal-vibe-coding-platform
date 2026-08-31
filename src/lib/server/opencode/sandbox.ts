@@ -61,6 +61,14 @@ export interface SandboxProvider {
 	 * never be pointed at an arbitrary worker outside the project.
 	 */
 	undeployProject(projectId: string, creds: CloudflareCredentials, storage?: AppStorage): Promise<DeployResult>;
+	/**
+	 * Runs an arbitrary shell command in the project's sandbox and returns its
+	 * output — wakes a stopped sandbox if it still exists, but does not
+	 * provision a new one. For the Executive Chef console (see
+	 * src/routes/executive): the caller already named a specific App, so
+	 * there's no ambiguity about which sandbox to run against.
+	 */
+	executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }>;
 }
 
 function generalGuidanceSkill(guidance = '') {
@@ -360,6 +368,17 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		this.cwds.delete(projectId);
 	}
 
+	async executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }> {
+		const cwd = this.cwds.get(projectId);
+		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
+		const { exec } = await import('node:child_process');
+		return new Promise((resolve) => {
+			exec(command, { cwd, timeout: 60_000 }, (err, stdout, stderr) => {
+				resolve({ exitCode: err && 'code' in err ? Number(err.code ?? 1) : 0, output: `${stdout}\n${stderr}` });
+			});
+		});
+	}
+
 	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage, environment?: Record<string, string>): Promise<DeployResult> {
 		return this.runWrangler(projectId, creds, ['deploy'], storage, environment);
 	}
@@ -567,6 +586,20 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		}
 		this.sandboxes.delete(projectId);
 		this.raw.delete(projectId);
+	}
+
+	async executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }> {
+		const daytona = await this.client();
+		const label = { 'vibe-project': projectId };
+		let daytonaSandbox: DaytonaSandboxHandle | undefined;
+		for await (const candidate of daytona.list({ labels: label })) {
+			daytonaSandbox = candidate;
+			break;
+		}
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+		if (daytonaSandbox.state !== 'started') await daytona.start(daytonaSandbox, 60);
+		const result = await daytonaSandbox.process.executeCommand(command, undefined, undefined, 60);
+		return { exitCode: result.exitCode ?? 0, output: result.result ?? '' };
 	}
 
 	// Looks the sandbox up by label and reads Daytona's own `state` field —
