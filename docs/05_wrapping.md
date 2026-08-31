@@ -324,3 +324,269 @@ of being pasted into a conversation.
   name, without ever receiving the value in the chat interface.
 - Secret values are absent from durable chat/audit records and blocked from the
   organisation repository by the platform's secret scan.
+
+---
+
+## Earlier draft: proposed roles, secrets and deploy-approval model (not yet reconciled)
+
+The sections below were drafted on `codex/wrapping-spec` before the multi-user
+access slice above was implemented. They propose a broader role, secrets/integration
+and deployment-approval model. Kept here for reference; needs reconciling with the
+implemented Better Auth / org-Kitchen-app model above rather than treated as current plan.
+
+## Purpose of the wrapper
+
+The wrapper is the product layer around the OpenCode-in-Daytona core. It is the
+place where an organisation decides who may use the platform, what they may
+build and deploy, which integrations and secrets are available, and how work
+can be observed or approved. It must not become a second agent backend: the
+browser continues to speak only to our application, and our application
+continues to proxy the project agent running in its sandbox.
+
+The first version should make the existing real end-to-end flow feel like a
+safe, understandable product for a small internal team. Multi-tenant scale,
+enterprise identity provisioning and every possible provider can follow once
+the model below is working.
+
+## Current core and wrapper seam
+
+The real core currently has two useful but intentionally pre-wrapper paths:
+
+- `/live?project=<id>` provisions or resumes an OpenCode server in a Daytona
+  sandbox labelled by that project ID, and exposes its conversation, preview
+  and sandbox-destruction controls through same-origin application routes.
+- The counter proof deploys from a Daytona sandbox using Cloudflare credentials
+  held by the application runtime. It proves the deploy/destroy mechanics, but
+  is deliberately a single shared internal setup rather than a credential
+  boundary.
+
+Those paths are the implementation seam, not a security model. The wrapper
+must replace browser-supplied project selection with a server-resolved project
+record and an effective membership check before **every** sandbox, session,
+preview, deployment or deletion operation. It must replace shared runtime
+credentials with a scoped secret/integration capability selected from the
+project's effective Kitchen policy. The existing sandbox label and OpenCode
+session identifier become implementation details stored against the Project;
+they are not authority-bearing identifiers.
+
+## Core vocabulary and boundaries
+
+- **Organisation**: the top-level customer/account boundary, including its
+  identity configuration, billing ownership and audit retention.
+- **Kitchen**: a scoped working environment inside an organisation. A Kitchen
+  carries default policy, integrations, skills/agent instructions and
+  observability settings. Kitchens may be nested, with child Kitchens only
+  able to make policy more restrictive than their parent.
+- **Chef**: a human member. A Chef's effective access is the intersection of
+  their role and every applicable Kitchen policy.
+- **Project**: a specific application or coding effort within a Kitchen. It
+  owns its source repository/branch, sandbox, OpenCode sessions, deployments
+  and project-specific secrets.
+- **Run**: one attributable agent interaction or deployment operation. Runs
+  supply the audit trail and approval history; conversation messages remain
+  available in the project timeline.
+
+The product control plane stores this metadata, access decisions, encrypted
+secret references and audit events. The execution plane is the Daytona sandbox
+and the deployed application. A sandbox receives only the short-lived,
+least-privileged material needed for its current task.
+
+## Dashboard
+
+The landing page after sign-in is an organisation dashboard. It should answer
+three questions immediately: what needs my attention, what is currently
+running, and where do I resume work.
+
+### Head Chef dashboard
+
+- **Attention queue**: deployment approvals, access requests, proposed Kitchen
+  policy changes, failed runs and expiring/invalid integrations.
+- **Kitchen overview**: each Kitchen's member count, active projects, active
+  sandboxes, recent deployment status and current policy posture.
+- **Project activity**: recently changed projects, agent runs in progress,
+  deployment history and links to the conversation/preview.
+- **Risk and cost signals**: sandbox usage, failed deployment rate, secrets
+  requiring rotation and policy exceptions. These are signals, not a billing
+  system in the first release.
+
+### Chef dashboard
+
+- Projects the Chef can open, ordered by recent activity.
+- A clear **Create project** action, pre-filled with the Kitchen's approved
+  template and defaults.
+- Their pending invitations, access requests and approvals they have requested.
+- A compact activity feed for their own projects, including when a Head Chef
+  approves, rejects or comments on a deployment.
+
+The project page remains the coding workspace. Its header should always show
+the current Kitchen, environment, deployment state, effective permissions and
+whether the agent is currently running. Controls that are unavailable by
+policy should be shown disabled with a concise explanation rather than hidden.
+
+## Membership, invitations and roles
+
+Initial authentication can be passwordless email sign-in. An invitation grants
+access to a named organisation and Kitchen only after the recipient verifies
+control of its target email address. Invitations are single-use, expire after a
+short configurable period, and can be revoked before acceptance. We should
+not create an active member record until acceptance.
+
+The first role set should be deliberately small:
+
+| Role | Intended capabilities |
+|---|---|
+| Organisation owner | Manage the organisation, its owners, identity settings, billing and all Kitchens. Keep this role rare. |
+| Head Chef | Manage an assigned Kitchen: members, projects, defaults, integrations and approvals, within inherited parent policy. |
+| Chef | Create and work on permitted projects; use approved secrets and integrations; request deployments or elevated access. |
+| Viewer | Inspect allowed projects, conversations, runs and deployments; cannot prompt an agent, change code or expose secrets. |
+
+Roles establish the upper bound, then per-Kitchen permissions refine it. The
+first permissions worth making explicit are `view_projects`, `create_projects`,
+`run_agent`, `manage_project_secrets`, `request_deploy`, `approve_deploy`,
+`deploy`, `manage_members` and `manage_kitchen_policy`. Avoid arbitrary
+per-action ACLs until a real need appears; role plus these named grants are
+auditable and understandable.
+
+Parent Kitchens can grant a child Kitchen a bounded delegation (for example,
+"may invite people from @example.com and may deploy only to staging"). Children
+cannot widen an inherited domain restriction, secret scope, deployment target
+or approval requirement.
+
+## Kitchen setup and policy
+
+Creating a Kitchen is a short, explicit setup flow:
+
+1. Name it and select its parent (if any).
+2. Choose an approved project template and source-control destination.
+3. Select its sandbox profile: base image, allowed network destinations,
+   compute limits, idle shutdown and permitted tools/skills.
+4. Attach approved integrations and secret scopes.
+5. Set deployment environments and approval rules.
+6. Set observability defaults and invite the initial Chefs.
+
+Kitchen policy is versioned. A Head Chef proposes a change as a diff with a
+plain-language impact summary; if the parent policy or Kitchen rule requires
+approval, the change remains pending until approved. Every project run records
+the policy version it used, so later investigation does not rely on today's
+configuration.
+
+Useful first policy controls are:
+
+- permitted model/provider configuration and maximum spend/run;
+- sandbox image, resource limits, idle destruction and outbound-domain allowlist;
+- repository template and branch/deployment naming convention;
+- which integrations and secret scopes a project may request;
+- staging/production targets and who may request versus approve/deploy;
+- required agent instructions, skills, testing and observability defaults.
+
+## Secrets and integrations
+
+Secrets need a dedicated management area; they must never be passed through
+the chat transcript, browser logs or durable audit-event payloads. A secret is
+an encrypted value stored by the control plane plus metadata: owner scope,
+provider/type, allowed projects/environments, creation and last-rotated times,
+and who may use or rotate it. The UI may reveal neither the original value nor
+an equivalent recovery mechanism after creation.
+
+Start with three scopes:
+
+- **Organisation secrets**, available only where a Kitchen policy delegates
+  them (for example, central observability credentials).
+- **Kitchen secrets**, such as a shared Cloudflare account or an approved
+  model-provider credential.
+- **Project secrets**, such as the Google Maps credential supplied for one app.
+
+Projects reference a named secret capability rather than receive a raw value
+in configuration. At run time the application checks the effective policy,
+then injects a short-lived value into the sandbox process environment or a
+provider-specific credential file. The agent should be told a capability is
+available (for example, `GOOGLE_MAPS_API_KEY`) but the platform should redact
+its value from agent output wherever possible. A sandbox must not retain
+secrets after destruction, and preview/deployment logs must be redacted before
+they reach the UI.
+
+Integrations are related but distinct. An integration records how the platform
+connects to GitHub, Cloudflare, Daytona, PostHog, Sentry or an identity
+provider; it stores OAuth/token material and account metadata behind the same
+encryption boundary. Kitchen policy grants projects a narrow capability such as
+"deploy to this Cloudflare account's staging environment", rather than giving
+them a general-purpose Cloudflare API token.
+
+The first release needs create, rotate, revoke and scope-change actions,
+confirmation before destructive revocation, and immutable audit events for
+each. Automatic rotation, secret scanning and customer-managed keys are later
+work, though the data model should leave room for them.
+
+## Deployment and approval flow
+
+Each project has named environments: at minimum `preview`/`staging` and
+`production`. A Chef can run the agent and deploy to environments permitted by
+their Kitchen. For protected environments, a deploy action creates a
+deployment request containing the source revision, changed files, test result
+summary, target, requested secrets/integrations and the policy version.
+
+An eligible Head Chef approves or rejects the request with an optional comment.
+Approval is for an immutable revision and expires if the revision, target,
+effective secret scope or policy changes. The actual deployment then runs with
+a short-lived deployment credential and records its provider URL, status and
+logs. A production deploy must never be silently retried after a failure.
+
+For the first increment, implement one protected toggle: **"Chef may deploy
+only with Head Chef approval."** It corresponds directly to the existing demo
+journey and establishes the approval/audit model before adding richer rules.
+
+## Observability and audit
+
+The wrapper should expose a project activity timeline combining agent runs,
+approvals, deployments, sandbox lifecycle changes and policy/secret metadata
+events. It should link out to configured PostHog, Sentry and OpenTelemetry
+destinations rather than reimplement those products.
+
+Audit events are append-only and include actor, action, resource, timestamp,
+effective role/policy version and outcome. They deliberately exclude secret
+values, full unredacted environment variables and sensitive prompt attachments.
+Organisation owners can search and export audit events; Viewers may see only
+events for resources they can already access.
+
+## First delivery slices
+
+Build the wrapper in vertical slices around the real core rather than by
+building every administration screen first:
+
+1. **Single Kitchen, seeded owner**: add persisted organisation, Kitchen,
+   project and membership records; route the existing live workspace through a
+   server-authorised selected project rather than `demo-project` or a
+   browser-trusted query parameter. Persist the sandbox label and OpenCode
+   session identifiers only as project metadata.
+2. **Project dashboard**: list/create/resume projects; show sandbox and
+   deployment state, and retain the existing destroy action behind project
+   ownership.
+3. **Invitations and roles**: email invitation acceptance, Kitchen-scoped Chef
+   and Viewer roles, plus server-side permission checks on every project route.
+4. **Kitchen/project secrets**: encrypted storage, scoped injection and
+   redaction, initially for Daytona, Cloudflare and Google Maps credentials;
+   migrate the counter proof away from application-wide Cloudflare credentials.
+5. **Protected deployment**: request/approve/reject flow for production and a
+   durable audit timeline.
+6. **Nested Kitchens and enterprise identity**: parent-policy inheritance,
+   domain gating, SSO/OAuth and broader integrations only after the simple
+   model has been exercised.
+
+Every slice needs server-side authorisation; client-side disabled buttons are
+explanatory UI only, never enforcement. The wrapper should be introduced
+without breaking the direct core workflow: existing projects get migrated into
+a seeded Kitchen, and their active sandbox/session identifiers remain attached
+to the new project record.
+
+## Decisions to validate before implementation
+
+- Which identity provider should power the first invitation/sign-in flow, and
+  what data-residency requirements apply?
+- Where will encrypted secrets live, which KMS/key-management boundary is
+  acceptable, and who is allowed to perform an emergency break-glass rotation?
+- Is GitHub access an organisation-wide installation, per-Kitchen connection,
+  or initially one internal service account?
+- What is the exact approval policy for production: one Head Chef, any two
+  approvers, or a named code owner for the project?
+- Which audit retention period and export controls are needed for the intended
+  internal users?
