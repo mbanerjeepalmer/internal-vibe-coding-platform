@@ -3,6 +3,7 @@
 // see docs/03_opencode_backend_spec.md's open question about exact payload shapes.
 
 import type { Sandbox } from './sandbox';
+import type { ModelCapabilities } from '$lib/attachments';
 
 type Target = Pick<Sandbox, 'baseUrl' | 'headers'>;
 
@@ -15,6 +16,8 @@ export interface ModelRef {
 export interface ModelSummary extends ModelRef {
 	name: string;
 	free?: boolean;
+	/** From opencode's `/api/model` — which input media types this model actually accepts. */
+	capabilities: ModelCapabilities;
 }
 
 /**
@@ -47,15 +50,28 @@ export async function createSession(target: Target): Promise<{ id: string }> {
 	return data;
 }
 
+// opencode's default capabilities for a model it knows nothing about
+// (e.g. a custom-registered model like "Luna" with no models.dev entry) —
+// conservative (text-only) rather than assuming attachment support that
+// isn't there. Verified live (opencode-ai@1.18.25) that a plain-text-only
+// model reports `capabilities: { tools, input: ["text"], output: ["text"] }`.
+const NO_CAPABILITIES: ModelCapabilities = { tools: false, input: ['text'], output: ['text'] };
+
 export async function listModels(target: Target): Promise<ModelSummary[]> {
 	const { data } = await req<{
-		data: { id: string; providerID: string; name: string }[];
+		data: {
+			id: string;
+			providerID: string;
+			name: string;
+			capabilities?: ModelCapabilities;
+		}[];
 	}>(target, '/api/model');
 	return data.map((m) => ({
 		id: m.id,
 		providerID: m.providerID,
 		name: m.name,
-		free: m.id.endsWith('-free')
+		free: m.id.endsWith('-free'),
+		capabilities: m.capabilities ?? NO_CAPABILITIES
 	}));
 }
 

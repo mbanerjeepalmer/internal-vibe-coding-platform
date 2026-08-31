@@ -1,4 +1,5 @@
 import type { SessionEvent } from './events';
+import type { ModelCapabilities } from '$lib/attachments';
 
 export type TimelineItem =
 	| { kind: 'user'; id: string; text: string }
@@ -21,6 +22,7 @@ export interface ModelRef {
 export interface ModelSummary extends ModelRef {
 	name: string;
 	free?: boolean;
+	capabilities: ModelCapabilities;
 }
 
 export interface PermissionRequest {
@@ -205,11 +207,15 @@ export class OpencodeSession {
 
 	async sendPrompt(text: string, files?: PromptFile[]) {
 		if (!this.sessionId || (!text.trim() && !files?.length)) return;
-		await fetch(`/api/kitchen/${this.projectId}/session/${this.sessionId}/prompt`, {
+		const res = await fetch(`/api/kitchen/${this.projectId}/session/${this.sessionId}/prompt`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ text, files })
+			body: JSON.stringify({ text, files, model: this.model })
 		});
+		if (!res.ok) {
+			const body = (await res.json().catch(() => null)) as { error?: string } | null;
+			throw new Error(body?.error ?? `prompt rejected: ${res.status}`);
+		}
 	}
 
 	async setModel(model: ModelSummary) {

@@ -9,6 +9,10 @@ export type SecretMetadata = {
 	createdAt: string;
 	updatedAt: string;
 	overridesKitchenSecret?: boolean;
+	/** Whether this secret is forwarded into the coding agent's sandbox as an
+	 * environment variable. false = platform-operational only (e.g. a deploy
+	 * credential) — never reaches the agent's shell. */
+	agentVisible: boolean;
 };
 
 const namePattern = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -42,39 +46,77 @@ async function encrypt(value: string, keyMaterial: string) {
 	return { ciphertext: encode(ciphertext), iv: encode(iv) };
 }
 
-/** Values only cross this boundary for an authorised operation; metadata is always value-free. */
-export async function effectiveAppSecrets(db: D1Database, appId: string, keyMaterial: string | undefined) {
-	const key = requireKey(keyMaterial);
-	const app = await db.prepare('SELECT kitchen_id AS kitchenId FROM apps WHERE id = ?').bind(appId).first<{ kitchenId: string }>();
-	if (!app) throw new Error('App not found.');
-	const rows = await db.prepare(
-		`SELECT name, ciphertext, iv FROM secrets WHERE kitchen_id = ?
-		 UNION ALL SELECT name, ciphertext, iv FROM secrets WHERE app_id = ?`
-	).bind(app.kitchenId, appId).all<{ name: string; ciphertext: string; iv: string }>();
+async function decryptRows(rows: { name: string; ciphertext: string; iv: string }[], key: string) {
 	const values: Record<string, string> = {};
-	for (const row of rows.results) {
+	for (const row of rows) {
 		const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: decode(row.iv) }, await encryptionKey(key), decode(row.ciphertext));
 		values[row.name] = decoder.decode(plain);
 	}
 	return values;
 }
 
+/**
+ * Secrets forwarded into the coding agent's sandbox as environment variables
+ * — only ones marked `agent_visible` (the default). Values only cross this
+ * boundary for an authorised operation; metadata is always value-free.
+ */
+export async function effectiveAppSecrets(db: D1Database, appId: string, keyMaterial: string | undefined) {
+	const key = requireKey(keyMaterial);
+	const app = await db.prepare('SELECT kitchen_id AS kitchenId FROM apps WHERE id = ?').bind(appId).first<{ kitchenId: string }>();
+	if (!app) throw new Error('App not found.');
+	const rows = await db.prepare(
+		`SELECT name, ciphertext, iv FROM secrets WHERE kitchen_id = ? AND agent_visible = 1
+		 UNION ALL SELECT name, ciphertext, iv FROM secrets WHERE app_id = ? AND agent_visible = 1`
+	).bind(app.kitchenId, appId).all<{ name: string; ciphertext: string; iv: string }>();
+	return decryptRows(rows.results, key);
+}
+
+/**
+ * Every secret on a Kitchen, regardless of `agent_visible` — for
+ * platform-operational server code (e.g. the deploy route) that runs outside
+ * the agent's sandbox entirely and so can safely see a deploy-only secret.
+ * Never call this to build the sandbox's environment.
+ */
+export async function effectiveKitchenSecrets(db: D1Database, kitchenId: string, keyMaterial: string | undefined) {
+	const key = requireKey(keyMaterial);
+	const rows = await db.prepare('SELECT name, ciphertext, iv FROM secrets WHERE kitchen_id = ?').bind(kitchenId).all<{
+		name: string;
+		ciphertext: string;
+		iv: string;
+	}>();
+	return decryptRows(rows.results, key);
+}
+
 export async function listAppSecrets(db: D1Database, userId: string, appId: string) {
 	const app = await getAppAccess(db, userId, appId);
 	if (!app) throw error(404, 'App not found.');
 	const [kitchen, own] = await Promise.all([
-		db.prepare('SELECT id, name, created_at AS createdAt, updated_at AS updatedAt FROM secrets WHERE kitchen_id = ? ORDER BY name').bind(app.kitchenId).all<Omit<SecretMetadata, 'scope'>>(),
-		db.prepare('SELECT id, name, created_at AS createdAt, updated_at AS updatedAt FROM secrets WHERE app_id = ? ORDER BY name').bind(appId).all<Omit<SecretMetadata, 'scope'>>()
+		db.prepare('SELECT id, name, agent_visible AS agentVisible, created_at AS createdAt, updated_at AS updatedAt FROM secrets WHERE kitchen_id = ? ORDER BY name').bind(app.kitchenId).all<Omit<SecretMetadata, 'scope'>>(),
+		db.prepare('SELECT id, name, agent_visible AS agentVisible, created_at AS createdAt, updated_at AS updatedAt FROM secrets WHERE app_id = ? ORDER BY name').bind(appId).all<Omit<SecretMetadata, 'scope'>>()
 	]);
 	const kitchenNames = new Set(kitchen.results.map((secret) => secret.name));
 	return {
 		app,
-		kitchen: kitchen.results.map((secret) => ({ ...secret, scope: 'kitchen' as const })),
-		appSecrets: own.results.map((secret) => ({ ...secret, scope: 'app' as const, overridesKitchenSecret: kitchenNames.has(secret.name) }))
+		kitchen: kitchen.results.map((secret) => ({ ...secret, scope: 'kitchen' as const, agentVisible: Boolean(secret.agentVisible) })),
+		appSecrets: own.results.map((secret) => ({
+			...secret,
+			scope: 'app' as const,
+			agentVisible: Boolean(secret.agentVisible),
+			overridesKitchenSecret: kitchenNames.has(secret.name)
+		}))
 	};
 }
 
-export async function saveSecret(db: D1Database, userId: string, appId: string, scope: SecretScope, name: string, value: string, keyMaterial: string | undefined) {
+export async function saveSecret(
+	db: D1Database,
+	userId: string,
+	appId: string,
+	scope: SecretScope,
+	name: string,
+	value: string,
+	keyMaterial: string | undefined,
+	agentVisible = true
+) {
 	if (!namePattern.test(name)) throw error(400, 'Secret names must be uppercase environment-variable names.');
 	if (!value) throw error(400, 'Enter a secret value.');
 	const app = await getAppAccess(db, userId, appId);
@@ -85,10 +127,10 @@ export async function saveSecret(db: D1Database, userId: string, appId: string, 
 	const scopeColumn = scope === 'kitchen' ? 'kitchen_id' : 'app_id';
 	const scopeId = scope === 'kitchen' ? app.kitchenId : appId;
 	await db.prepare(
-		`INSERT INTO secrets (id, ${scopeColumn}, name, ciphertext, iv, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(${scopeColumn}, name) DO UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, updated_at = excluded.updated_at`
-	).bind(crypto.randomUUID(), scopeId, name, encrypted.ciphertext, encrypted.iv, userId, timestamp, timestamp).run();
+		`INSERT INTO secrets (id, ${scopeColumn}, name, ciphertext, iv, agent_visible, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(${scopeColumn}, name) DO UPDATE SET ciphertext = excluded.ciphertext, iv = excluded.iv, agent_visible = excluded.agent_visible, updated_at = excluded.updated_at`
+	).bind(crypto.randomUUID(), scopeId, name, encrypted.ciphertext, encrypted.iv, agentVisible ? 1 : 0, userId, timestamp, timestamp).run();
 	return { scope, name };
 }
 

@@ -4,6 +4,7 @@
 	import ToolCall from '$lib/components/ToolCall.svelte';
 	import Composer from '$lib/components/Composer.svelte';
 	import { OpencodeSession, type PromptFile } from '$lib/opencode/session.svelte';
+	import { acceptAttribute, supportedCategoryLabel, supportsAnyAttachment, supportsAttachment } from '$lib/attachments';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -13,17 +14,27 @@
 	let ready = $state(false);
 	let initError = $state<string | null>(null);
 	let pendingFiles = $state<PromptFile[]>([]);
+	let attachError = $state<string | null>(null);
 	let fileInput: HTMLInputElement;
+	let attachAccept = $derived(acceptAttribute(session.model?.capabilities));
+	let attachEnabled = $derived(supportsAnyAttachment(session.model?.capabilities));
+	let attachLabel = $derived(
+		attachEnabled ? `📎 Attach ${supportedCategoryLabel(session.model?.capabilities)}` : `📎 Attach`
+	);
 	let destroying = $state(false);
 	let storage = $state<{ linked: { databaseId: string; databaseName: string } | null; orphans: Array<{ databaseId: string; databaseName: string }> } | null>(null);
 	let storageBusy = $state(false);
 	let storageError = $state<string | null>(null);
-	let secrets = $state<{ kitchen: Array<{ name: string }>; appSecrets: Array<{ name: string; overridesKitchenSecret?: boolean }> } | null>(null);
+	let secrets = $state<{
+		kitchen: Array<{ name: string; agentVisible: boolean }>;
+		appSecrets: Array<{ name: string; agentVisible: boolean; overridesKitchenSecret?: boolean }>;
+	} | null>(null);
 	let secretsBusy = $state(false);
 	let secretsError = $state<string | null>(null);
 	let secretName = $state('');
 	let secretValue = $state('');
 	let secretScope = $state<'app' | 'kitchen'>('app');
+	let secretAgentVisible = $state(true);
 	let requestedSecretValue = $state<Record<string, string>>({});
 	let requestedSecretBusy = $state<string | null>(null);
 	let requestedSecretError = $state<Record<string, string>>({});
@@ -44,7 +55,9 @@
 		composerValue = '';
 		const files = pendingFiles;
 		pendingFiles = [];
-		session.sendPrompt(text, files);
+		session.sendPrompt(text, files).catch((err) => {
+			attachError = err instanceof Error ? err.message : String(err);
+		});
 	}
 
 	function toolIcon(tool: string) {
@@ -96,15 +109,22 @@
 	// Attachments go to opencode as a multimodal content part sent straight to
 	// the model — they only work with a model whose capabilities cover the
 	// attached media type. See docs/01_hardcoded_demo.md's attachment findings.
+	// The file picker's `accept` is already restricted to what the current
+	// model supports (see attachAccept above), but that's just a UI hint the
+	// OS is free to ignore — re-check the real mime type here too.
 	function onFilePicked(e: Event) {
+		attachError = null;
 		const file = (e.target as HTMLInputElement).files?.[0];
 		if (!file) return;
+		const mime = file.type || 'application/octet-stream';
+		if (!supportsAttachment(mime, session.model?.capabilities)) {
+			attachError = `"${session.model?.name ?? 'this model'}" doesn't support attaching ${mime} files`;
+			(e.target as HTMLInputElement).value = '';
+			return;
+		}
 		const reader = new FileReader();
 		reader.onload = () => {
-			pendingFiles = [
-				...pendingFiles,
-				{ uri: reader.result as string, mime: file.type || 'application/octet-stream', name: file.name }
-			];
+			pendingFiles = [...pendingFiles, { uri: reader.result as string, mime, name: file.name }];
 		};
 		reader.readAsDataURL(file);
 		(e.target as HTMLInputElement).value = '';
@@ -169,10 +189,17 @@
 		try {
 			const response = await fetch(`/api/kitchen/${data.app.id}/secrets`, {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ scope: secretScope, name: secretName.trim(), value: secretValue })
+				body: JSON.stringify({
+					scope: secretScope,
+					name: secretName.trim(),
+					value: secretValue,
+					// Only a Kitchen secret can be deploy-only — an App secret has
+					// no other consumer than the agent building that App.
+					agentVisible: secretScope === 'kitchen' ? secretAgentVisible : true
+				})
 			});
 			if (!response.ok) throw new Error(await response.text());
-			secretName = ''; secretValue = '';
+			secretName = ''; secretValue = ''; secretAgentVisible = true;
 			await loadSecrets();
 		} catch (err) { secretsError = err instanceof Error ? err.message : String(err); secretsBusy = false; }
 	}
@@ -323,11 +350,26 @@
 							{/each}
 							{#if !secrets.appSecrets.length}<p>None yet.</p>{/if}
 						</div>
-						<div class="space-y-1"><p class="font-medium">Kitchen secrets inherited by this App</p>{#each secrets.kitchen as secret (secret.name)}<div class="flex justify-between gap-1"><span class="truncate">{secret.name}</span>{#if data.app.role === 'head_chef'}<button type="button" onclick={() => removeSecret('kitchen', secret.name)} class="text-red-700 underline">Delete</button>{/if}</div>{/each}{#if !secrets.kitchen.length}<p>None yet.</p>{/if}</div>
+						<div class="space-y-1">
+							<p class="font-medium">Kitchen secrets inherited by this App</p>
+							{#each secrets.kitchen as secret (secret.name)}
+								<div class="flex justify-between gap-1">
+									<span class="truncate">{secret.name}{secret.agentVisible ? '' : ' (deploy-only — agent never sees this)'}</span>
+									{#if data.app.role === 'head_chef'}<button type="button" onclick={() => removeSecret('kitchen', secret.name)} class="text-red-700 underline">Delete</button>{/if}
+								</div>
+							{/each}
+							{#if !secrets.kitchen.length}<p>None yet.</p>{/if}
+						</div>
 						<form class="space-y-1" onsubmit={(event) => { event.preventDefault(); saveSecret(); }}>
 							{#if data.app.role === 'head_chef'}<select bind:value={secretScope} class="w-full rounded border border-slate-200 px-1 py-1"><option value="app">This App</option><option value="kitchen">Kitchen (shared)</option></select>{/if}
 							<input bind:value={secretName} placeholder="GOOGLE_MAPS_API_KEY" class="w-full rounded border border-slate-200 px-1 py-1" />
 							<input bind:value={secretValue} type="password" autocomplete="off" placeholder="Paste value (write-only)" class="w-full rounded border border-slate-200 px-1 py-1" />
+							{#if secretScope === 'kitchen'}
+								<label class="flex items-center gap-1.5 px-0.5 text-[11px] text-slate-600">
+									<input type="checkbox" bind:checked={secretAgentVisible} />
+									Give the coding agent this secret (uncheck for platform-only credentials like a Cloudflare deploy token)
+								</label>
+							{/if}
 							<button disabled={secretsBusy} class="w-full rounded bg-slate-800 px-2 py-1 text-white">Save {secretScope === 'kitchen' ? 'Kitchen' : 'App'} secret</button>
 						</form>
 					</div>
@@ -552,21 +594,30 @@
 					</div>
 				{/if}
 
+				{#if attachError}
+					<div class="mb-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
+						{attachError}
+					</div>
+				{/if}
+
 				<input
 					bind:this={fileInput}
 					type="file"
-					accept="image/*,video/*,audio/*,.pdf"
+					accept={attachAccept}
 					class="hidden"
+					disabled={!attachEnabled}
 					data-testid="attach-file-input"
 					onchange={onFilePicked}
 				/>
 				<button
 					type="button"
 					data-testid="attach-file"
+					disabled={!attachEnabled}
+					title={attachEnabled ? undefined : `"${session.model?.name ?? 'This model'}" doesn't support attachments`}
 					onclick={() => fileInput.click()}
-					class="mb-2 flex w-fit items-center gap-2 rounded-md border border-dashed border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-100"
+					class="mb-2 flex w-fit items-center gap-2 rounded-md border border-dashed border-blue-300 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400"
 				>
-					📎 Attach image/video/audio
+					{attachLabel}
 				</button>
 
 				<Composer

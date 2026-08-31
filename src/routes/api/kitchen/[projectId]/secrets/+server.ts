@@ -10,9 +10,18 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	const { db, user, app } = await requireAppAccess(event);
-	const body = await event.request.json() as { scope?: SecretScope; name?: string; value?: string };
+	const body = await event.request.json() as { scope?: SecretScope; name?: string; value?: string; agentVisible?: boolean };
 	if (body.scope !== 'app' && body.scope !== 'kitchen') return json({ message: 'Invalid secret scope.' }, { status: 400 });
-	await saveSecret(db, user.id, app.id, body.scope, String(body.name ?? '').trim(), String(body.value ?? ''), event.platform?.env.SECRET_ENCRYPTION_KEY);
+	await saveSecret(
+		db,
+		user.id,
+		app.id,
+		body.scope,
+		String(body.name ?? '').trim(),
+		String(body.value ?? ''),
+		event.platform?.env.SECRET_ENCRYPTION_KEY,
+		body.agentVisible ?? true
+	);
 	return json({ ok: true });
 };
 
