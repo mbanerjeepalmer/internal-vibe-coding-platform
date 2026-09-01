@@ -129,8 +129,14 @@ const DOMAIN_ALLOW_LIST =
  * this exact sequence left a deployed Worker still serving "Hello from
  * vibe-<id>!" after the agent reported a finished to-do app.
  */
+/** The deterministic Cloudflare Worker script name for an App — also used
+ * to look the deployed Worker back up by name (e.g. for Access wiring). */
+export function workerNameForApp(projectId: string) {
+	return `vibe-${projectId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+}
+
 function starterFiles(projectId: string): Record<string, string> {
-	const workerName = `vibe-${projectId}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+	const workerName = workerNameForApp(projectId);
 	return {
 		'wrangler.jsonc': JSON.stringify(
 			{

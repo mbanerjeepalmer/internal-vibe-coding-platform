@@ -38,6 +38,11 @@
 	let requestedSecretValue = $state<Record<string, string>>({});
 	let requestedSecretBusy = $state<string | null>(null);
 	let requestedSecretError = $state<Record<string, string>>({});
+	let accessRules = $state<Array<{ id: string; ruleType: 'email' | 'domain'; value: string }> | null>(null);
+	let accessBusy = $state(false);
+	let accessError = $state<string | null>(null);
+	let accessRuleType = $state<'email' | 'domain'>('email');
+	let accessRuleValue = $state('');
 
 	let panelTab = $state<'timeline' | 'preview' | 'menu'>('timeline');
 	let previewPort = $state('5173');
@@ -236,6 +241,45 @@
 		} catch (err) {
 			requestedSecretError = { ...requestedSecretError, [itemId]: err instanceof Error ? err.message : String(err) };
 		} finally { requestedSecretBusy = null; }
+	}
+
+	async function loadAccessRules() {
+		accessBusy = true;
+		accessError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/access-rules`);
+			if (!response.ok) throw new Error(await response.text());
+			accessRules = await response.json();
+		} catch (err) {
+			accessError = err instanceof Error ? err.message : String(err);
+		} finally { accessBusy = false; }
+	}
+
+	async function addAccessRule() {
+		accessBusy = true;
+		accessError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/access-rules`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ruleType: accessRuleType, value: accessRuleValue.trim() })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			accessRuleValue = '';
+			await loadAccessRules();
+		} catch (err) { accessError = err instanceof Error ? err.message : String(err); accessBusy = false; }
+	}
+
+	async function removeAccessRule(ruleId: string) {
+		accessBusy = true;
+		accessError = null;
+		try {
+			const response = await fetch(`/api/kitchen/${data.app.id}/access-rules`, {
+				method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ ruleId })
+			});
+			if (!response.ok) throw new Error(await response.text());
+			await loadAccessRules();
+		} catch (err) { accessError = err instanceof Error ? err.message : String(err); accessBusy = false; }
 	}
 </script>
 
@@ -464,6 +508,52 @@
 						{/if}
 					</div>
 				{/if}
+
+				<button
+					type="button"
+					onclick={loadAccessRules}
+					disabled={accessBusy}
+					class="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+				>
+					🔒 App access
+					<span class="mt-0.5 block font-normal text-slate-500">Restrict who can use this deployed app</span>
+				</button>
+				{#if accessRules}
+					<div class="space-y-2 rounded-md border border-slate-200 bg-white p-2 text-[11px] text-slate-600">
+						{#if !session.deployed}
+							<p>Deploy this app at least once before configuring access rules.</p>
+						{:else}
+							<p>
+								{accessRules.length
+									? 'Restricted — only these people can use the deployed app. Kitchen members always have access.'
+									: 'Anyone with the link can use this app. Add a rule below to restrict access.'}
+							</p>
+							<div class="space-y-1">
+								{#each accessRules as rule (rule.id)}
+									<div class="flex justify-between gap-1">
+										<span class="truncate">{rule.ruleType === 'domain' ? `@${rule.value}` : rule.value}</span>
+										<button type="button" onclick={() => removeAccessRule(rule.id)} class="text-red-700 underline">Revoke</button>
+									</div>
+								{/each}
+								{#if !accessRules.length}<p>None yet.</p>{/if}
+							</div>
+							<form class="space-y-1" onsubmit={(event) => { event.preventDefault(); addAccessRule(); }}>
+								<select bind:value={accessRuleType} class="w-full rounded border border-slate-200 px-1 py-1">
+									<option value="email">Email address</option>
+									<option value="domain">Email domain</option>
+								</select>
+								<input
+									bind:value={accessRuleValue}
+									placeholder={accessRuleType === 'email' ? 'person@example.com' : 'example.com'}
+									class="w-full rounded border border-slate-200 px-1 py-1"
+								/>
+								<button disabled={accessBusy || !accessRuleValue.trim()} class="w-full rounded bg-slate-800 px-2 py-1 text-white">Add rule</button>
+							</form>
+							<p class="text-slate-400">Changes apply immediately — no redeploy needed.</p>
+						{/if}
+					</div>
+				{/if}
+				{#if accessError}<p class="text-[11px] text-red-600">{accessError}</p>{/if}
 
 				<button
 					type="button"
