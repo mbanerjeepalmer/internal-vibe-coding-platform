@@ -39,12 +39,26 @@ export function createAuth(env: AuthEnv, requestOrigin: string) {
 				expiresIn: 60 * 15,
 				storeToken: 'hashed',
 				async sendMagicLink({ email, url }) {
+					// Email security gateways (Mimecast, Outlook Safe Links, Proofpoint)
+					// pre-fetch every link in an inbound email to scan it for malware,
+					// which silently consumes this single-use token before the user
+					// ever clicks. Emailing a link to our own interstitial page instead
+					// means the scanner's GET just renders a harmless page; the actual
+					// (token-consuming) verification link only fires from a real click
+					// on the "Finish signing in" button there.
+					const realVerifyUrl = new URL(url);
+					const token = realVerifyUrl.searchParams.get('token') ?? '';
+					const callbackURL = realVerifyUrl.searchParams.get('callbackURL') ?? '';
+					const interstitialUrl = new URL('/signin/verify', realVerifyUrl.origin);
+					interstitialUrl.searchParams.set('token', token);
+					if (callbackURL) interstitialUrl.searchParams.set('callbackURL', callbackURL);
+
 					const result = await resend.emails.send({
 						from,
 						to: email,
 						subject: 'Sign in to Vibe Kitchen',
-						text: `Use this secure link to sign in to Vibe Kitchen: ${url}`,
-						html: `<p>Use this secure link to sign in to Vibe Kitchen:</p><p><a href="${url}">Sign in to Vibe Kitchen</a></p>`
+						text: `Use this secure link to sign in to Vibe Kitchen: ${interstitialUrl.toString()}`,
+						html: `<p>Use this secure link to sign in to Vibe Kitchen:</p><p><a href="${interstitialUrl.toString()}">Sign in to Vibe Kitchen</a></p>`
 					});
 
 					if (result.error) {
