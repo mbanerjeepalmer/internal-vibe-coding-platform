@@ -1,9 +1,10 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSandboxProvider } from '$lib/server/opencode/sandbox';
+import { getSandboxProvider, workerNameForApp } from '$lib/server/opencode/sandbox';
 import { requireAppAccess } from '$lib/server/authz';
 import { getAppStorage, getOrCreateAppStorage } from '$lib/server/app-storage';
 import { effectiveAppSecrets, effectiveKitchenSecrets } from '$lib/server/secrets';
+import { getWorkerScriptId } from '$lib/server/cloudflare-access';
 
 // Resolution order mirrors resolveDefaultModel's Kitchen-override pattern:
 // a Kitchen's own CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID (stored as
@@ -35,6 +36,24 @@ export const POST: RequestHandler = async (event) => {
 	const storage = await getOrCreateAppStorage(db, app.id, creds);
 	const secrets = await effectiveAppSecrets(db, app.id, event.platform?.env.SECRET_ENCRYPTION_KEY);
 	const result = await getSandboxProvider().deployProject(app.id, creds, storage, secrets);
+	if (result.success) {
+		// Best-effort: cache the Cloudflare-side Worker id once so app-access
+		// rules can attach an Access Application to it. Never fail the deploy
+		// response over this — access rules just can't be configured until it
+		// succeeds on some later deploy.
+		try {
+			const existing = await db
+				.prepare('SELECT cf_worker_id AS cfWorkerId FROM apps WHERE id = ?')
+				.bind(app.id)
+				.first<{ cfWorkerId: string | null }>();
+			if (!existing?.cfWorkerId) {
+				const workerId = await getWorkerScriptId(creds, workerNameForApp(app.id));
+				if (workerId) await db.prepare('UPDATE apps SET cf_worker_id = ? WHERE id = ?').bind(workerId, app.id).run();
+			}
+		} catch (err) {
+			console.error('Unable to cache the Worker id for Access wiring', err);
+		}
+	}
 	return json(result);
 };
 
