@@ -23,6 +23,13 @@
 	});
 
 	$effect(() => {
+		// An invitation that named the invitee wins over a name remembered from
+		// a previous, unrelated sign-in on this browser.
+		const invitedName = page.url.searchParams.get('name');
+		if (invitedName) {
+			name = invitedName;
+			return;
+		}
 		try {
 			const rememberedName = localStorage.getItem(NAME_STORAGE_KEY);
 			if (rememberedName) name = rememberedName;

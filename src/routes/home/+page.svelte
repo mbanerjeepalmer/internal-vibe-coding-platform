@@ -208,6 +208,12 @@
 									<input type="hidden" name="kitchenId" value={kitchen.id} />
 									<input type="hidden" name="kitchenName" value={kitchen.name} />
 									<input
+										type="text"
+										name="inviteeName"
+										placeholder="Their name"
+										class="min-w-0 flex-1 rounded-md border border-stone-300 px-3 py-1.5 text-sm"
+									/>
+									<input
 										type="email"
 										name="email"
 										required
@@ -247,7 +253,9 @@
 								class="flex items-center justify-between gap-2 rounded-lg border border-stone-200 bg-white px-4 py-2.5"
 							>
 								<div class="min-w-0">
-									<p class="truncate text-sm text-stone-900">{invitation.email}</p>
+									<p class="truncate text-sm text-stone-900">
+										{invitation.inviteeName ? `${invitation.inviteeName} · ${invitation.email}` : invitation.email}
+									</p>
 									<p class="text-xs text-stone-500">
 										{invitation.kitchenName
 											? `${invitation.kitchenRole} in ${invitation.kitchenName}`

@@ -60,7 +60,7 @@
 				</form>
 			{:else}
 				<a
-					href={`/signin?email=${encodeURIComponent(invitation.email)}&lock=1&next=${encodeURIComponent(page.url.pathname)}`}
+					href={`/signin?email=${encodeURIComponent(invitation.email)}&lock=1&next=${encodeURIComponent(page.url.pathname)}${invitation.inviteeName ? `&name=${encodeURIComponent(invitation.inviteeName)}` : ''}`}
 					class="block w-full rounded-md bg-amber-600 px-4 py-2 text-center text-sm font-medium text-white hover:bg-amber-700"
 				>
 					Sign in to accept

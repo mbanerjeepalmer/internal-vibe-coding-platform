@@ -70,6 +70,7 @@ export const actions: Actions = {
 		const kitchenName = String(form.get('kitchenName') ?? '') || undefined;
 		const kitchenRole = (String(form.get('kitchenRole') ?? 'chef') || 'chef') as 'head_chef' | 'chef';
 		const email = String(form.get('email') ?? '').trim();
+		const inviteeName = String(form.get('inviteeName') ?? '').trim();
 		const organisationName = String(form.get('organisationName') ?? 'your organisation');
 
 		if (!email) return fail(400, { message: 'Enter an email address.' });
@@ -80,11 +81,13 @@ export const actions: Actions = {
 				organisationId,
 				kitchenId,
 				email,
+				inviteeName,
 				organisationRole: 'member',
 				kitchenRole: kitchenId ? kitchenRole : undefined
 			});
 			await sendInvitationEmail(platform!.env, {
 				to: email,
+				inviteeName,
 				url: `${url.origin}/invite/${token}`,
 				organisationName,
 				kitchenName

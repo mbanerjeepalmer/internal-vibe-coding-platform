@@ -324,12 +324,14 @@ export async function createInvitation(
 		organisationId: string;
 		kitchenId?: string;
 		email: string;
+		inviteeName?: string;
 		organisationRole: OrganisationRole;
 		kitchenRole?: KitchenRole;
 	}
 ) {
 	const email = options.email.trim().toLowerCase();
 	if (!email.includes('@')) throw new Error('Enter a valid email address.');
+	const inviteeName = options.inviteeName?.trim() || null;
 
 	const orgRole = await getOrganisationRole(db, actor.id, options.organisationId);
 	if (orgRole !== 'owner') {
@@ -349,14 +351,15 @@ export async function createInvitation(
 	await db
 		.prepare(
 			`INSERT INTO invitations
-			 (id, organisation_id, kitchen_id, email, organisation_role, kitchen_role, token_hash, expires_at, created_by, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			 (id, organisation_id, kitchen_id, email, invitee_name, organisation_role, kitchen_role, token_hash, expires_at, created_by, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.bind(
 			id,
 			options.organisationId,
 			options.kitchenId ?? null,
 			email,
+			inviteeName,
 			options.organisationRole,
 			options.kitchenRole ?? null,
 			tokenHash,
@@ -373,7 +376,7 @@ export async function createInvitation(
 export async function listPendingInvitations(db: D1Database, organisationId: string) {
 	const result = await db
 		.prepare(
-			`SELECT i.id, i.email, i.kitchen_id AS kitchenId, k.name AS kitchenName,
+			`SELECT i.id, i.email, i.invitee_name AS inviteeName, i.kitchen_id AS kitchenId, k.name AS kitchenName,
 			 i.organisation_role AS organisationRole, i.kitchen_role AS kitchenRole, i.expires_at AS expiresAt
 			 FROM invitations i LEFT JOIN kitchens k ON k.id = i.kitchen_id
 			 WHERE i.organisation_id = ? AND i.accepted_at IS NULL AND i.revoked_at IS NULL
@@ -383,6 +386,7 @@ export async function listPendingInvitations(db: D1Database, organisationId: str
 		.all<{
 			id: string;
 			email: string;
+			inviteeName: string | null;
 			kitchenId: string | null;
 			kitchenName: string | null;
 			organisationRole: OrganisationRole;
@@ -412,7 +416,7 @@ export async function getInvitationByToken(db: D1Database, token: string) {
 	const tokenHash = await hashToken(token);
 	return db
 		.prepare(
-			`SELECT i.id, i.email, i.organisation_id AS organisationId, o.name AS organisationName,
+			`SELECT i.id, i.email, i.invitee_name AS inviteeName, i.organisation_id AS organisationId, o.name AS organisationName,
 			 i.kitchen_id AS kitchenId, k.name AS kitchenName,
 			 i.organisation_role AS organisationRole, i.kitchen_role AS kitchenRole,
 			 i.expires_at AS expiresAt, i.accepted_at AS acceptedAt, i.revoked_at AS revokedAt
@@ -425,6 +429,7 @@ export async function getInvitationByToken(db: D1Database, token: string) {
 		.first<{
 			id: string;
 			email: string;
+			inviteeName: string | null;
 			organisationId: string;
 			organisationName: string;
 			kitchenId: string | null;
