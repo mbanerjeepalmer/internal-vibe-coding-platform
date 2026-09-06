@@ -345,6 +345,23 @@ After making a change, re-read \`index.js\`/\`wrangler.jsonc\` and confirm the
 thing you just built is actually reachable from the Worker's \`fetch\` handler
 or assets config — not just present as a file — before telling the user it's
 done.
+
+## Live preview while you work
+
+The platform has a **Preview** panel that proxies one arbitrary port from
+this sandbox — it does not know a dev server is running until you start one.
+Deploying is not required to see live changes. Whenever you finish a change
+the user would want to see, or whenever they ask to preview/see/view the app:
+
+1. Start \`npx wrangler dev --port 8787 --ip 0.0.0.0\` in the background (it
+   hot-reloads on file changes, so start it once per session and leave it
+   running rather than restarting it per change).
+2. Tell the user it's up and to open the **Preview** tab. 8787 is already the
+   panel's default port, so mention the port only if you had to use a
+   different one.
+
+Bind \`--ip 0.0.0.0\`, not the default \`localhost\` — the platform reaches this
+port from outside the sandbox, and \`localhost\` will not be reachable.
 `
 	};
 }
@@ -859,7 +876,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			const secretsGuide = files['.opencode/skills/vibe-app-secrets/SKILL.md'].replace(/'/g, `'\\''`);
 			const requestTool = files['.opencode/tools/request_secret.ts'].replace(/'/g, `'\\''`);
 			const result = await daytonaSandbox.process.executeCommand(
-				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/vibe-app-secrets .opencode/skills/general-guidance .opencode/tools && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; test -f .opencode/skills/vibe-app-secrets/SKILL.md || printf '%s' '${secretsGuide}' > .opencode/skills/vibe-app-secrets/SKILL.md; test -f .opencode/tools/request_secret.ts || printf '%s' '${requestTool}' > .opencode/tools/request_secret.ts; printf '%s' '${guidance}' > .opencode/skills/general-guidance/SKILL.md; sed -i 's/team-guidance/general-guidance/g; s/shared working rules for this team/general guidance for how to work/g' AGENTS.md; rm -rf .opencode/skills/team-guidance; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'vibe-app-secrets' AGENTS.md || printf '\n\nFor credentials, API keys, tokens, passwords, secrets, or environment variables, load the \`vibe-app-secrets\` skill.\n' >> AGENTS.md; grep -q 'general-guidance' AGENTS.md || printf '\n\nAlways load the \`general-guidance\` skill before responding. It contains general guidance for how to work.\n' >> AGENTS.md; ${skillsSync}`
+				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/vibe-app-secrets .opencode/skills/general-guidance .opencode/tools && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; test -f .opencode/skills/vibe-app-secrets/SKILL.md || printf '%s' '${secretsGuide}' > .opencode/skills/vibe-app-secrets/SKILL.md; test -f .opencode/tools/request_secret.ts || printf '%s' '${requestTool}' > .opencode/tools/request_secret.ts; printf '%s' '${guidance}' > .opencode/skills/general-guidance/SKILL.md; sed -i 's/team-guidance/general-guidance/g; s/shared working rules for this team/general guidance for how to work/g' AGENTS.md; rm -rf .opencode/skills/team-guidance; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'vibe-app-secrets' AGENTS.md || printf '\n\nFor credentials, API keys, tokens, passwords, secrets, or environment variables, load the \`vibe-app-secrets\` skill.\n' >> AGENTS.md; grep -q 'general-guidance' AGENTS.md || printf '\n\nAlways load the \`general-guidance\` skill before responding. It contains general guidance for how to work.\n' >> AGENTS.md; grep -q 'Live preview while you work' AGENTS.md || printf '\n\n## Live preview while you work\n\nThe platform has a Preview panel that proxies one arbitrary port from this sandbox. Deploying is not required to see live changes. Whenever you finish a change the user would want to see, or whenever they ask to preview/see/view the app, start \`npx wrangler dev --port 8787 --ip 0.0.0.0\` in the background (bind 0.0.0.0, not the default localhost, or the platform cannot reach it) and keep it running, then tell the user to open the Preview tab (8787 is already its default port).\n' >> AGENTS.md; ${skillsSync}`
 			);
 			if (result.exitCode !== 0) throw new Error(`adding storage guidance to the Daytona sandbox failed:\n${result.result}`);
 			return;

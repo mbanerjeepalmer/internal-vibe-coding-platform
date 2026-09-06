@@ -45,7 +45,7 @@
 	let accessRuleValue = $state('');
 
 	let panelTab = $state<'timeline' | 'preview' | 'menu'>('timeline');
-	let previewPort = $state('5173');
+	let previewPort = $state('8787');
 	let previewSrc = $state<string | null>(null);
 
 	$effect(() => {
@@ -147,9 +147,9 @@
 	}
 
 	function startDevServer() {
-		const port = Number(previewPort) || 5173;
+		const port = Number(previewPort) || 8787;
 		session.sendPrompt(
-			`Start this project's dev server on port ${port} (for example \`npm run dev\`, adjusted for this project's stack) and keep it running in the background so the Preview panel can reach it. Reply once it's up so I know to open the preview.`
+			`Start this project's dev server on port ${port} (\`npx wrangler dev --port ${port} --ip 0.0.0.0\`, or the equivalent for whatever this project's stack is if you've changed it away from Workers) and keep it running in the background so the Preview panel can reach it. Reply once it's up so I know to open the preview.`
 		);
 		panelTab = 'timeline';
 	}
@@ -771,7 +771,7 @@
 				{:else}
 					<div class="flex max-w-xs flex-col items-center gap-3 px-4 text-center">
 						<p class="text-sm text-slate-400">
-							Nothing's running on port {previewPort || '5173'} yet. Ask the agent to start a dev
+							Nothing's running on port {previewPort || '8787'} yet. Ask the agent to start a dev
 							server, then hit Open.
 						</p>
 						<button
