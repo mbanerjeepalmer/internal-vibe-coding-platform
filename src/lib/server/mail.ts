@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { extractEmailAddress, formatSender, renderEmailHtml } from './email-branding';
 
 export type MailEnv = {
 	RESEND_API_KEY?: string;
@@ -24,11 +25,19 @@ export async function sendInvitationEmail(
 
 	const resend = new Resend(apiKey);
 	const result = await resend.emails.send({
-		from,
+		from: formatSender(from),
+		replyTo: extractEmailAddress(from),
 		to: options.to,
-		subject: `You've been invited to ${options.organisationName} on Vibe Kitchen`,
-		text: `You've been invited to join ${place} on Vibe Kitchen. ${explainer}\n\nAccept your invitation: ${options.url}`,
-		html: `<p>You've been invited to join <strong>${place}</strong> on Vibe Kitchen.</p><p>${explainer}</p><p><a href="${options.url}">Accept your invitation</a></p>`
+		subject: `You've been invited to join ${options.organisationName} on Vibe Kitchen`,
+		text: `You've been invited to join ${place} on Vibe Kitchen.\n\n${explainer}\n\nAccept your invitation: ${options.url}\n\n— The Vibe Kitchen team`,
+		html: renderEmailHtml({
+			preheader: `You've been invited to join ${place} on Vibe Kitchen.`,
+			heading: `You're invited to join ${place}`,
+			bodyHtml: `<p style="margin:0 0 12px 0;">${explainer}</p><p style="margin:0;">Accept the invitation below to get started.</p>`,
+			ctaLabel: 'Accept your invitation',
+			ctaUrl: options.url,
+			footerHtml: `Not expecting this invitation? You can safely ignore this email.`
+		})
 	});
 
 	if (result.error) {
