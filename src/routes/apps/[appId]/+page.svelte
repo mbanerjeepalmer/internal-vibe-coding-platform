@@ -3,6 +3,7 @@
 	import ChatMessage from '$lib/components/ChatMessage.svelte';
 	import ToolCall from '$lib/components/ToolCall.svelte';
 	import Composer from '$lib/components/Composer.svelte';
+	import FilesPanel from '$lib/components/FilesPanel.svelte';
 	import { OpencodeSession, type PromptFile } from '$lib/opencode/session.svelte';
 	import { acceptAttribute, supportedCategoryLabel, supportsAnyAttachment, supportsAttachment } from '$lib/attachments';
 	import type { PageData } from './$types';
@@ -45,8 +46,14 @@
 	let accessRuleValue = $state('');
 
 	let panelTab = $state<'timeline' | 'preview' | 'menu'>('timeline');
+	let rightPaneTab = $state<'preview' | 'files'>('preview');
 	let previewPort = $state('8787');
 	let previewSrc = $state<string | null>(null);
+
+	function openFiles() {
+		rightPaneTab = 'files';
+		panelTab = 'preview';
+	}
 
 	$effect(() => {
 		session
@@ -143,6 +150,7 @@
 		const port = Number(previewPort);
 		if (!Number.isInteger(port) || port <= 0) return;
 		previewSrc = `/api/kitchen/${data.app.id}/preview/${port}/`;
+		rightPaneTab = 'preview';
 		panelTab = 'preview';
 	}
 
@@ -304,10 +312,23 @@
 		>
 		<button
 			type="button"
-			onclick={() => (panelTab = 'preview')}
-			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'preview'
+			onclick={() => {
+				rightPaneTab = 'preview';
+				panelTab = 'preview';
+			}}
+			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'preview' &&
+			rightPaneTab === 'preview'
 				? 'border-blue-600 text-blue-700'
 				: 'border-transparent text-slate-500'}">Preview</button
+		>
+		<button
+			type="button"
+			data-testid="mobile-files-tab"
+			onclick={openFiles}
+			class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {panelTab === 'preview' &&
+			rightPaneTab === 'files'
+				? 'border-blue-600 text-blue-700'
+				: 'border-transparent text-slate-500'}">Files</button
 		>
 		<button
 			type="button"
@@ -726,47 +747,70 @@
 				? '!flex'
 				: ''}"
 		>
-			<div class="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
-				<span class="text-xs font-medium text-slate-500">Preview port</span>
-				<input
-					bind:value={previewPort}
-					data-testid="preview-port-input"
-					class="w-20 rounded border border-slate-300 px-2 py-1 text-xs"
-				/>
+			<div class="flex items-center gap-1 border-b border-slate-200 bg-white px-3 pt-2">
 				<button
 					type="button"
-					data-testid="open-preview"
-					onclick={openPreview}
-					class="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800"
-					>Open</button
+					data-testid="right-pane-preview-tab"
+					onclick={() => (rightPaneTab = 'preview')}
+					class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {rightPaneTab === 'preview'
+						? 'border-blue-600 text-blue-700'
+						: 'border-transparent text-slate-500'}">Preview</button
+				>
+				<button
+					type="button"
+					data-testid="right-pane-files-tab"
+					onclick={() => (rightPaneTab = 'files')}
+					class="rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium {rightPaneTab === 'files'
+						? 'border-blue-600 text-blue-700'
+						: 'border-transparent text-slate-500'}">Files</button
 				>
 			</div>
-			<div class="flex flex-1 items-center justify-center">
-				{#if previewSrc}
-					<iframe
-						src={previewSrc}
-						title="Sandbox preview"
-						data-testid="preview-frame"
-						class="h-full w-full border-0"
-					></iframe>
-				{:else}
-					<div class="flex max-w-xs flex-col items-center gap-3 px-4 text-center">
-						<p class="text-sm text-slate-400">
-							Nothing's running on port {previewPort || '8787'} yet. Ask the agent to start a dev
-							server, then hit Open.
-						</p>
-						<button
-							type="button"
-							data-testid="start-dev-server"
-							onclick={startDevServer}
-							disabled={!ready}
-							class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-						>
-							▶️ Ask agent to start dev server
-						</button>
-					</div>
-				{/if}
-			</div>
+
+			{#if rightPaneTab === 'files'}
+				<FilesPanel appId={data.app.id} />
+			{:else}
+				<div class="flex items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
+					<span class="text-xs font-medium text-slate-500">Preview port</span>
+					<input
+						bind:value={previewPort}
+						data-testid="preview-port-input"
+						class="w-20 rounded border border-slate-300 px-2 py-1 text-xs"
+					/>
+					<button
+						type="button"
+						data-testid="open-preview"
+						onclick={openPreview}
+						class="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800"
+						>Open</button
+					>
+				</div>
+				<div class="flex flex-1 items-center justify-center">
+					{#if previewSrc}
+						<iframe
+							src={previewSrc}
+							title="Sandbox preview"
+							data-testid="preview-frame"
+							class="h-full w-full border-0"
+						></iframe>
+					{:else}
+						<div class="flex max-w-xs flex-col items-center gap-3 px-4 text-center">
+							<p class="text-sm text-slate-400">
+								Nothing's running on port {previewPort || '8787'} yet. Ask the agent to start a dev
+								server, then hit Open.
+							</p>
+							<button
+								type="button"
+								data-testid="start-dev-server"
+								onclick={startDevServer}
+								disabled={!ready}
+								class="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+							>
+								▶️ Ask agent to start dev server
+							</button>
+						</div>
+					{/if}
+				</div>
+			{/if}
 		</section>
 	</div>
 </div>

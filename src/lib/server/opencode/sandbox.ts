@@ -40,6 +40,16 @@ export interface AppStorage {
 	databaseName: string;
 }
 
+/** One entry from a project's file tree — see `SandboxProvider.listFiles`. */
+export interface FileEntry {
+	/** Entry name only (no path separators). */
+	name: string;
+	/** Path relative to the project root, forward-slash separated, no leading slash. */
+	path: string;
+	isDir: boolean;
+	size: number;
+}
+
 export interface SandboxProvider {
 	getOrCreateSandbox(projectId: string, kitchenGuidance?: string, environment?: Record<string, string>): Promise<Sandbox>;
 	/**
@@ -69,6 +79,41 @@ export interface SandboxProvider {
 	 * there's no ambiguity about which sandbox to run against.
 	 */
 	executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }>;
+	/**
+	 * Lists one directory's immediate entries inside a project's sandbox — the
+	 * App's file tree viewer loads one level at a time rather than walking the
+	 * whole tree up front. Pass '' for the project root. Provisions a sandbox
+	 * if none exists yet, same as `getOrCreateSandbox` — a chef should be able
+	 * to upload files before the agent has ever run.
+	 */
+	listFiles(projectId: string, path: string): Promise<FileEntry[]>;
+	/**
+	 * Writes a chef-uploaded file into a project's sandbox at `path` (relative
+	 * to the project root, forward-slash separated). The destination
+	 * directory must already exist.
+	 */
+	writeFile(projectId: string, path: string, content: Uint8Array): Promise<void>;
+}
+
+/**
+ * Validates a browser-supplied relative path before it reaches the sandbox:
+ * rejects absolute paths and `..` segments so a chef can never read from or
+ * write outside the project directory. Returns a clean, forward-slash-joined
+ * path ('' for the project root itself).
+ */
+export function safeRelativePath(input: string): string {
+	const segments = input
+		.replace(/\\/g, '/')
+		.split('/')
+		.filter((segment) => segment.length > 0 && segment !== '.');
+	if (segments.some((segment) => segment === '..' || segment.includes('\0'))) {
+		throw new Error('Invalid path.');
+	}
+	return segments.join('/');
+}
+
+function sortFileEntries(entries: FileEntry[]): FileEntry[] {
+	return entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
 }
 
 function generalGuidanceSkill(guidance = '') {
@@ -402,6 +447,41 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		});
 	}
 
+	async listFiles(projectId: string, relPath: string): Promise<FileEntry[]> {
+		await this.getOrCreateSandbox(projectId);
+		const cwd = this.cwds.get(projectId);
+		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
+		const fs = await import('node:fs/promises');
+		const path = await import('node:path');
+		const safe = safeRelativePath(relPath);
+		const dirents = await fs.readdir(path.join(cwd, safe), { withFileTypes: true });
+		const entries = await Promise.all(
+			dirents.map(async (dirent) => {
+				const stat = await fs.stat(path.join(cwd, safe, dirent.name)).catch(() => null);
+				return {
+					name: dirent.name,
+					path: safe ? `${safe}/${dirent.name}` : dirent.name,
+					isDir: dirent.isDirectory(),
+					size: stat?.size ?? 0
+				};
+			})
+		);
+		return sortFileEntries(entries);
+	}
+
+	async writeFile(projectId: string, relPath: string, content: Uint8Array): Promise<void> {
+		await this.getOrCreateSandbox(projectId);
+		const cwd = this.cwds.get(projectId);
+		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
+		const fs = await import('node:fs/promises');
+		const path = await import('node:path');
+		const safe = safeRelativePath(relPath);
+		if (!safe) throw new Error('A destination file name is required.');
+		const filePath = path.join(cwd, safe);
+		await fs.mkdir(path.dirname(filePath), { recursive: true });
+		await fs.writeFile(filePath, content);
+	}
+
 	async deployProject(projectId: string, creds: CloudflareCredentials, storage: AppStorage, environment?: Record<string, string>): Promise<DeployResult> {
 		return this.runWrangler(projectId, creds, ['deploy'], storage, environment);
 	}
@@ -623,6 +703,43 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		if (daytonaSandbox.state !== 'started') await daytona.start(daytonaSandbox, 60);
 		const result = await daytonaSandbox.process.executeCommand(command, undefined, undefined, 60);
 		return { exitCode: result.exitCode ?? 0, output: result.result ?? '' };
+	}
+
+	async listFiles(projectId: string, relPath: string): Promise<FileEntry[]> {
+		await this.getOrCreateSandbox(projectId);
+		const daytonaSandbox = this.raw.get(projectId);
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+		const safe = safeRelativePath(relPath);
+		const infos = await daytonaSandbox.fs.listFiles(this.projectRelativePath(safe));
+		return sortFileEntries(
+			infos.map((info) => ({
+				name: info.name,
+				path: safe ? `${safe}/${info.name}` : info.name,
+				isDir: info.isDir,
+				size: info.size
+			}))
+		);
+	}
+
+	async writeFile(projectId: string, relPath: string, content: Uint8Array): Promise<void> {
+		await this.getOrCreateSandbox(projectId);
+		const daytonaSandbox = this.raw.get(projectId);
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+		const safe = safeRelativePath(relPath);
+		if (!safe) throw new Error('A destination file name is required.');
+		await daytonaSandbox.fs.uploadFile(Buffer.from(content), this.projectRelativePath(safe));
+	}
+
+	// `daytonaSandbox.fs.*` paths are resolved by the Daytona daemon against
+	// the sandbox's own "working directory" (its docs don't say more
+	// precisely than that) — mirroring `PROJECT_DIR`'s `~/project` shell
+	// convention but without the `~`, since this is a plain path sent over
+	// the file-system API rather than a shell command a shell expands. Not
+	// traced live against a real Daytona sandbox (no `DAYTONA_API_KEY` was
+	// available while writing this) — worth confirming against one.
+	private projectRelativePath(relPath: string): string {
+		const base = PROJECT_DIR.replace(/^~\//, '');
+		return relPath ? `${base}/${relPath}` : base;
 	}
 
 	// Looks the sandbox up by label and reads Daytona's own `state` field —
