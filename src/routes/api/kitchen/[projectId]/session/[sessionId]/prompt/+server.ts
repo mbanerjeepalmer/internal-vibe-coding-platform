@@ -4,10 +4,12 @@ import { getSandboxProvider } from '$lib/server/opencode/sandbox';
 import { listModels, sendPrompt, type ModelRef, type PromptFile } from '$lib/server/opencode/client';
 import { requireActiveAppSession } from '$lib/server/authz';
 import { supportsAttachment } from '$lib/attachments';
+import { resolveSandboxStartOptions } from '$lib/server/sandbox-context';
 
 export const POST: RequestHandler = async (event) => {
-	const { app } = await requireActiveAppSession(event);
-	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, app.agentGuidance);
+	const { db, app } = await requireActiveAppSession(event);
+	const options = await resolveSandboxStartOptions(db, app, event.platform);
+	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, options);
 	const { text, files, model } = (await event.request.json()) as {
 		text: string;
 		files?: PromptFile[];

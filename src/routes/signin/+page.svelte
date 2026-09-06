@@ -35,6 +35,10 @@
 	<div class="rounded-xl border border-stone-200 bg-white p-8 shadow-sm">
 		<p class="mb-1 text-2xl">🍳</p>
 		<h1 class="mb-1 text-lg font-semibold text-stone-900">Vibe Kitchen</h1>
+		<p class="mb-4 text-xs text-stone-500">
+			Describe an app in plain English and an AI coding agent builds and deploys it for you.
+			<a href="/" class="text-amber-700 hover:underline">What's this?</a>
+		</p>
 
 		{#if status === 'sent'}
 			<p class="text-sm text-stone-600">

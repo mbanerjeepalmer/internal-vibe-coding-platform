@@ -19,6 +19,12 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	"r2_buckets": [
+		{
+			"binding": "APP_SOURCE",
+			"bucket_name": "ivcp-app-source"
+		}
+	],
 	"observability": {
 		"enabled": true,
 		"head_sampling_rate": 1

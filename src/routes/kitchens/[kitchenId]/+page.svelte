@@ -6,6 +6,9 @@
 
 	let showCreateApp = $state(false);
 	let guidance = $state(data.kitchen.agentGuidance ?? '');
+	let kitchenName = $state(data.kitchen.name);
+	let kitchenDescription = $state(data.kitchen.description ?? '');
+	let selectedSkillIds = $state(new Set(data.skillIds));
 </script>
 
 <div class="min-h-screen bg-stone-50">
@@ -15,6 +18,9 @@
 			<div>
 				<a href="/home" class="text-xs text-stone-500 hover:underline">← All kitchens</a>
 				<p class="text-sm font-semibold text-stone-900">{data.kitchen.name}</p>
+				{#if data.kitchen.description}
+					<p class="text-xs text-stone-500">{data.kitchen.description}</p>
+				{/if}
 			</div>
 		</div>
 	</header>
@@ -94,6 +100,78 @@
 				{/each}
 			</ul>
 		</section>
+
+		{#if data.kitchen.role === 'head_chef'}
+			<section class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+				<h2 class="text-base font-semibold text-stone-900">Kitchen profile</h2>
+				<p class="mt-1 text-sm text-stone-600">Rename this Kitchen or give it a short description.</p>
+				<form method="POST" action="?/saveProfile" use:enhance class="mt-4 flex flex-col gap-3">
+					<label class="block">
+						<span class="mb-1 block text-xs font-medium text-stone-600">Name</span>
+						<input
+							bind:value={kitchenName}
+							name="name"
+							required
+							class="w-full rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-800"
+						/>
+					</label>
+					<label class="block">
+						<span class="mb-1 block text-xs font-medium text-stone-600">Description</span>
+						<textarea
+							bind:value={kitchenDescription}
+							name="description"
+							maxlength="500"
+							rows="2"
+							placeholder="What is this Kitchen for?"
+							class="w-full rounded-md border border-stone-300 p-3 text-sm text-stone-800"
+						></textarea>
+					</label>
+					<button
+						type="submit"
+						class="self-start rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800"
+					>
+						Save profile
+					</button>
+				</form>
+			</section>
+
+			<section class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+				<h2 class="text-base font-semibold text-stone-900">Skills</h2>
+				<p class="mt-1 text-sm text-stone-600">
+					Turn on skills every App agent in this Kitchen should follow, alongside the agent rules
+					below.
+				</p>
+				<form method="POST" action="?/saveSkills" use:enhance class="mt-4 flex flex-col gap-3">
+					{#each data.skillCatalog as skillOption (skillOption.id)}
+						<label class="flex items-start gap-2 rounded-md border border-stone-200 p-3">
+							<input
+								type="checkbox"
+								name="skillIds"
+								value={skillOption.id}
+								checked={selectedSkillIds.has(skillOption.id)}
+								onchange={(e) => {
+									const next = new Set(selectedSkillIds);
+									if ((e.target as HTMLInputElement).checked) next.add(skillOption.id);
+									else next.delete(skillOption.id);
+									selectedSkillIds = next;
+								}}
+								class="mt-0.5"
+							/>
+							<span>
+								<span class="block text-sm font-medium text-stone-900">{skillOption.name}</span>
+								<span class="block text-xs text-stone-500">{skillOption.summary}</span>
+							</span>
+						</label>
+					{/each}
+					<button
+						type="submit"
+						class="self-start rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800"
+					>
+						Save skills
+					</button>
+				</form>
+			</section>
+		{/if}
 
 		<section class="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
 			<h2 class="text-base font-semibold text-stone-900">Agent rules</h2>

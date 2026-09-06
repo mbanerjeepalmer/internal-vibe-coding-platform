@@ -10,7 +10,7 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const session = new OpencodeSession(data.app.id);
+	const session = new OpencodeSession(data.app.id, data.app.sourceSavedAt);
 	let composerValue = $state('');
 	let ready = $state(false);
 	let initError = $state<string | null>(null);
@@ -468,6 +468,25 @@
 					{/if}
 					{#if storageError}<p class="text-[11px] text-red-600">{storageError}</p>{/if}
 				{/if}
+
+				<button
+					type="button"
+					data-testid="save-source"
+					onclick={() => session.saveSource()}
+					disabled={session.savingSource || session.destroyed}
+					class="w-full rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+				>
+					{session.savingSource ? 'Saving…' : '💾 Save source now'}
+				</button>
+				<p class="px-0.5 text-[11px] text-slate-400">
+					{#if session.sourceSaveError}
+						<span class="text-red-600">{session.sourceSaveError}</span>
+					{:else if session.sourceSavedAt}
+						Source saved {new Date(session.sourceSavedAt).toLocaleString()}
+					{:else}
+						Source not saved yet — also saved automatically on deploy and before the sandbox is destroyed.
+					{/if}
+				</p>
 
 				<button
 					type="button"
