@@ -58,6 +58,9 @@ export class OpencodeSession {
 	deployResult = $state<{ action: 'deploy' | 'undeploy'; success: boolean; log: string; url?: string } | null>(
 		null
 	);
+	savingSource = $state(false);
+	sourceSaveError = $state<string | null>(null);
+	sourceSavedAt = $state<string | null>(null);
 
 	sessionId: string | null = null;
 	private itemIndex = new Map<string, number>();
@@ -66,7 +69,12 @@ export class OpencodeSession {
 	private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 	private permissionPollTimer: ReturnType<typeof setInterval> | null = null;
 
-	constructor(private projectId: string) {}
+	constructor(
+		private projectId: string,
+		initialSourceSavedAt: string | null = null
+	) {
+		this.sourceSavedAt = initialSourceSavedAt;
+	}
 
 	async init() {
 		// A cold sandbox can take up to ~5min to provision (see
@@ -179,6 +187,22 @@ export class OpencodeSession {
 		this.dispose();
 		await fetch(`/api/kitchen/${this.projectId}`, { method: 'DELETE' });
 		this.destroyed = true;
+	}
+
+	/** Manual checkpoint — the server also saves automatically on deploy and before tearing down the sandbox. */
+	async saveSource() {
+		this.savingSource = true;
+		this.sourceSaveError = null;
+		try {
+			const res = await fetch(`/api/kitchen/${this.projectId}/source`, { method: 'POST' });
+			if (!res.ok) throw new Error(await res.text());
+			const { savedAt } = (await res.json()) as { savedAt: string };
+			this.sourceSavedAt = savedAt;
+		} catch (err) {
+			this.sourceSaveError = err instanceof Error ? err.message : String(err);
+		} finally {
+			this.savingSource = false;
+		}
 	}
 
 	private connect() {

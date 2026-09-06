@@ -19,13 +19,16 @@ export async function sendInvitationEmail(
 		? `the "${options.kitchenName}" Kitchen in ${options.organisationName}`
 		: options.organisationName;
 
+	const explainer =
+		"Vibe Kitchen is a platform where you describe the app you want in plain English, and an AI coding agent writes, runs, and deploys it for you — no coding required.";
+
 	const resend = new Resend(apiKey);
 	const result = await resend.emails.send({
 		from,
 		to: options.to,
 		subject: `You've been invited to ${options.organisationName} on Vibe Kitchen`,
-		text: `You've been invited to join ${place} on Vibe Kitchen. Accept your invitation: ${options.url}`,
-		html: `<p>You've been invited to join <strong>${place}</strong> on Vibe Kitchen.</p><p><a href="${options.url}">Accept your invitation</a></p>`
+		text: `You've been invited to join ${place} on Vibe Kitchen. ${explainer}\n\nAccept your invitation: ${options.url}`,
+		html: `<p>You've been invited to join <strong>${place}</strong> on Vibe Kitchen.</p><p>${explainer}</p><p><a href="${options.url}">Accept your invitation</a></p>`
 	});
 
 	if (result.error) {

@@ -26,6 +26,10 @@ OpenCode/Daytona workspace.
   `https://vibe.kitchen`.
 - D1 control plane binding: `DB` → `ivcp-control-plane`; migrations live in
   `migrations/`.
+- R2 source-persistence binding: `APP_SOURCE` → `ivcp-app-source` (see
+  `src/lib/server/app-source.ts`). Unlike D1, `wrangler deploy` does not
+  create a missing R2 bucket for you — it must exist before the first deploy
+  that references it: `npx wrangler r2 bucket create ivcp-app-source`.
 - Check which Worker secrets are currently configured in production with
   `npx wrangler secret list` — don't rely on a hardcoded list here, since it
   drifts out of sync with reality. (A hardcoded list in this file once missed
@@ -113,12 +117,28 @@ should move there instead of living only in the generic starter.
    raw `projectId` URL handling to server-authorised app selection.
 3. Give each App a durable branch in the organisation repository before its
    sandbox is started. Sandboxes are disposable; Git holds source/history.
+   **Landed with a Cloudflare-only alternative instead of GitHub**: each
+   App's project directory is snapshotted as a gzip tarball into the
+   `APP_SOURCE` R2 bucket (see `src/lib/server/app-source.ts` and
+   `SandboxProvider.exportSource`/`SandboxStartOptions.restoreSnapshot` in
+   `opencode/sandbox.ts`) on deploy success and before sandbox teardown, plus
+   on demand from the App page. A brand-new sandbox restores the latest
+   snapshot before starter files are written. Revisit a real Git-backed
+   version (durable history, diffing, GitHub) if that's still wanted later —
+   this only gives "nothing is lost," not source history.
 4. Add Kitchen/App secret UI and encrypted storage. Kitchen variables are
    inherited by its Apps; App variables override the same name. Tell agents
    only variable names (for example `GOOGLE_MAPS_API_KEY`) and inject values at
    process/runtime launch rather than into chat.
 5. Add skills only after the above is working: Kitchen defaults plus App-level
    selection, materialised into the sandbox as agent instructions/skill files.
+   **Kitchen defaults landed**: a Head Chef turns on any number of skills from
+   the built-in catalog in `src/lib/server/skills.ts` on the Kitchen settings
+   page; selections are stored in `kitchen_skills` and materialised at
+   `.opencode/skills/kitchen-<id>/SKILL.md` in every App's sandbox, resynced
+   whenever the selection changes (see `ensureProjectScaffold`/
+   `syncKitchenGuidance` in `opencode/sandbox.ts`). App-level skill selection
+   (overriding or adding to the Kitchen's defaults per App) is not yet built.
 
 ## Release guardrails
 

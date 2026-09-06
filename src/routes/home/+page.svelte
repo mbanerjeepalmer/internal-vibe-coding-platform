@@ -126,6 +126,9 @@
 									>
 										{kitchen.name}
 									</a>
+									{#if kitchen.description}
+										<p class="text-xs text-stone-500">{kitchen.description}</p>
+									{/if}
 									<p class="text-xs text-stone-500">
 										{kitchen.headChefName ? `Head Chef: ${kitchen.headChefName} · ` : ''}
 										{kitchen.memberCount}

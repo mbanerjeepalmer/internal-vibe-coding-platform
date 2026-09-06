@@ -5,6 +5,7 @@ import { createSession, listModels, resolveDefaultModel, switchModel } from '$li
 import { requireAppAccess } from '$lib/server/authz';
 import { claimSharedOpencodeSession, getAppAccess } from '$lib/server/control-plane';
 import { effectiveAppSecrets } from '$lib/server/secrets';
+import { resolveSandboxStartOptions } from '$lib/server/sandbox-context';
 
 export const POST: RequestHandler = async (event) => {
 	const { db, user, app } = await requireAppAccess(event);
@@ -13,7 +14,8 @@ export const POST: RequestHandler = async (event) => {
 	if (app.opencodeSessionId) return json({ sessionId: app.opencodeSessionId });
 
 	const secrets = await effectiveAppSecrets(db, app.id, event.platform?.env.SECRET_ENCRYPTION_KEY);
-	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, app.agentGuidance, secrets);
+	const options = await resolveSandboxStartOptions(db, app, event.platform, secrets);
+	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id, options);
 	const session = await createSession(sandbox);
 
 	// Resolve the model ourselves rather than trust whatever the client sent:
