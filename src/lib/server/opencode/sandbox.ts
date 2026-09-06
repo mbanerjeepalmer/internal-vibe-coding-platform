@@ -40,8 +40,31 @@ export interface AppStorage {
 	databaseName: string;
 }
 
+/** A Kitchen-selected skill (see src/lib/server/skills.ts) to materialise into an App's sandbox. */
+export interface KitchenSkill {
+	id: string;
+	content: string;
+}
+
+export interface SandboxStartOptions {
+	/** Head-Chef-authored guidance for every App in the Kitchen, materialised as a project-local skill. */
+	kitchenGuidance?: string;
+	/** Kitchen-selected skills from the built-in catalog, materialised alongside kitchenGuidance. */
+	kitchenSkills?: KitchenSkill[];
+	environment?: Record<string, string>;
+	/**
+	 * Called at most once, and only while provisioning a brand-new sandbox
+	 * (never against an existing/warm one — that could clobber whatever the
+	 * agent has written since the last save). Returns a previously saved
+	 * source snapshot (a gzip tarball of the project directory, see
+	 * src/lib/server/app-source.ts) to restore before starter files are
+	 * written, or null if nothing has been saved yet.
+	 */
+	restoreSnapshot?: () => Promise<Uint8Array | null>;
+}
+
 export interface SandboxProvider {
-	getOrCreateSandbox(projectId: string, kitchenGuidance?: string, environment?: Record<string, string>): Promise<Sandbox>;
+	getOrCreateSandbox(projectId: string, options?: SandboxStartOptions): Promise<Sandbox>;
 	/**
 	 * Reports whether a project's sandbox is actually awake right now, without
 	 * provisioning or starting one — so the Kitchens list can show accurate
@@ -69,6 +92,36 @@ export interface SandboxProvider {
 	 * there's no ambiguity about which sandbox to run against.
 	 */
 	executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }>;
+	/**
+	 * Packs the project directory (excluding node_modules, VCS metadata, and
+	 * build output — see SOURCE_EXPORT_EXCLUDES) into a gzip tarball, so its
+	 * source can be persisted outside the disposable sandbox. Sandbox must
+	 * already exist.
+	 */
+	exportSource(projectId: string): Promise<Uint8Array>;
+}
+
+// Directories a source export/restore never needs: reinstallable dependencies,
+// VCS metadata, and build output. Keeps snapshots small and avoids fighting
+// over files the tooling regenerates anyway.
+const SOURCE_EXPORT_EXCLUDES = [
+	'node_modules',
+	'.git',
+	'.wrangler',
+	'dist',
+	'build',
+	'.svelte-kit',
+	'.next',
+	'.turbo',
+	'.cache'
+];
+
+function tarExcludeFlags() {
+	return SOURCE_EXPORT_EXCLUDES.map((name) => `--exclude=${name}`);
+}
+
+function kitchenSkillDirName(skillId: string) {
+	return `kitchen-${skillId.replace(/[^a-z0-9-]/gi, '-')}`;
 }
 
 function generalGuidanceSkill(guidance = '') {
@@ -327,19 +380,21 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 	private children = new Map<string, import('node:child_process').ChildProcess>();
 	private cwds = new Map<string, string>();
 
-	async getOrCreateSandbox(projectId: string, kitchenGuidance?: string, environment?: Record<string, string>): Promise<Sandbox> {
+	async getOrCreateSandbox(projectId: string, options: SandboxStartOptions = {}): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
 		if (!existing) {
-			existing = this.spawn(projectId, environment);
+			existing = this.spawn(projectId, options.environment, options.restoreSnapshot);
 			this.sandboxes.set(projectId, existing);
 			existing.catch(() => this.sandboxes.delete(projectId));
 		}
 		const sandbox = await existing;
-		if (kitchenGuidance !== undefined) await this.syncKitchenGuidance(projectId, kitchenGuidance);
+		if (options.kitchenGuidance !== undefined) {
+			await this.syncKitchenGuidance(projectId, options.kitchenGuidance, options.kitchenSkills ?? []);
+		}
 		return sandbox;
 	}
 
-	private async syncKitchenGuidance(projectId: string, kitchenGuidance: string) {
+	private async syncKitchenGuidance(projectId: string, kitchenGuidance: string, kitchenSkills: KitchenSkill[] = []) {
 		const cwd = this.cwds.get(projectId);
 		if (!cwd) return;
 		const fs = await import('node:fs/promises');
@@ -355,6 +410,49 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		}
 		await fs.writeFile(agentsPath, agents);
 		await fs.rm(path.join(cwd, '.opencode', 'skills', 'team-guidance'), { recursive: true, force: true });
+
+		const skillsRoot = path.join(cwd, '.opencode', 'skills');
+		const entries = await fs.readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
+		await Promise.all(
+			entries
+				.filter((entry) => entry.isDirectory() && entry.name.startsWith('kitchen-'))
+				.map((entry) => fs.rm(path.join(skillsRoot, entry.name), { recursive: true, force: true }))
+		);
+		for (const kitchenSkill of kitchenSkills) {
+			const dir = path.join(skillsRoot, kitchenSkillDirName(kitchenSkill.id));
+			await fs.mkdir(dir, { recursive: true });
+			await fs.writeFile(path.join(dir, 'SKILL.md'), kitchenSkill.content);
+		}
+	}
+
+	async exportSource(projectId: string): Promise<Uint8Array> {
+		const cwd = this.cwds.get(projectId);
+		if (!cwd) throw new Error(`no local sandbox provisioned for project ${projectId}`);
+		const { execFile } = await import('node:child_process');
+		const { promisify } = await import('node:util');
+		const run = promisify(execFile);
+		const { stdout } = (await run(
+			'tar',
+			['-czf', '-', ...tarExcludeFlags(), '-C', cwd, '.'],
+			{ encoding: 'buffer', maxBuffer: 1024 * 1024 * 256 }
+		)) as unknown as { stdout: Buffer };
+		return new Uint8Array(stdout);
+	}
+
+	private async restoreSourceInto(cwd: string, bytes: Uint8Array) {
+		const fs = await import('node:fs/promises');
+		const os = await import('node:os');
+		const path = await import('node:path');
+		const { execFile } = await import('node:child_process');
+		const { promisify } = await import('node:util');
+		const run = promisify(execFile);
+		const tmpFile = path.join(os.tmpdir(), `vibe-restore-${crypto.randomUUID()}.tar.gz`);
+		await fs.writeFile(tmpFile, bytes);
+		try {
+			await run('tar', ['-xzf', tmpFile, '-C', cwd]);
+		} finally {
+			await fs.rm(tmpFile, { force: true });
+		}
 	}
 
 	async getPreviewUrl(_projectId: string, port: number): Promise<PreviewTarget> {
@@ -433,7 +531,11 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		}
 	}
 
-	private async spawn(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
+	private async spawn(
+		projectId: string,
+		environment?: Record<string, string>,
+		restoreSnapshot?: () => Promise<Uint8Array | null>
+	): Promise<Sandbox> {
 		const { spawn } = await import('node:child_process');
 		const fs = await import('node:fs/promises');
 		const os = await import('node:os');
@@ -442,6 +544,11 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		const cwd = path.join(os.tmpdir(), 'vibe-kitchen-sandboxes', projectId);
 		await fs.mkdir(cwd, { recursive: true });
 		this.cwds.set(projectId, cwd);
+
+		if (restoreSnapshot) {
+			const snapshot = await restoreSnapshot().catch(() => null);
+			if (snapshot) await this.restoreSourceInto(cwd, snapshot);
+		}
 
 		for (const [name, contents] of Object.entries(starterFiles(projectId))) {
 			const filePath = path.join(cwd, name);
@@ -561,19 +668,42 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return this.daytonaPromise;
 	}
 
-	async getOrCreateSandbox(projectId: string, kitchenGuidance?: string, environment?: Record<string, string>): Promise<Sandbox> {
+	async getOrCreateSandbox(projectId: string, options: SandboxStartOptions = {}): Promise<Sandbox> {
 		let existing = this.sandboxes.get(projectId);
 		if (!existing) {
-			existing = this.provision(projectId, environment);
+			existing = this.provision(projectId, options);
 			this.sandboxes.set(projectId, existing);
 			existing.catch(() => this.sandboxes.delete(projectId));
 		}
 		const sandbox = await existing;
-		if (kitchenGuidance !== undefined) {
+		if (options.kitchenGuidance !== undefined) {
 			const daytonaSandbox = this.raw.get(projectId);
-			if (daytonaSandbox) await this.ensureProjectScaffold(daytonaSandbox, projectId, kitchenGuidance);
+			if (daytonaSandbox) {
+				await this.ensureProjectScaffold(daytonaSandbox, projectId, options.kitchenGuidance, options.kitchenSkills);
+			}
 		}
 		return sandbox;
+	}
+
+	async exportSource(projectId: string): Promise<Uint8Array> {
+		const daytonaSandbox = this.raw.get(projectId);
+		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
+		const exportPath = '/tmp/vibe-source-export.tar.gz';
+		const result = await daytonaSandbox.process.executeCommand(
+			`tar -czf ${exportPath} ${tarExcludeFlags().join(' ')} -C ${PROJECT_DIR} .`
+		);
+		if (result.exitCode !== 0) throw new Error(`packing the project directory failed:\n${result.result}`);
+		const buffer = await daytonaSandbox.fs.downloadFile(exportPath);
+		return new Uint8Array(buffer);
+	}
+
+	private async restoreSourceInto(daytonaSandbox: DaytonaSandboxHandle, bytes: Uint8Array) {
+		const importPath = '/tmp/vibe-source-restore.tar.gz';
+		await daytonaSandbox.fs.uploadFile(Buffer.from(bytes), importPath);
+		const result = await daytonaSandbox.process.executeCommand(
+			`mkdir -p ${PROJECT_DIR} && tar -xzf ${importPath} -C ${PROJECT_DIR} && rm -f ${importPath}`
+		);
+		if (result.exitCode !== 0) throw new Error(`restoring the saved project snapshot failed:\n${result.result}`);
 	}
 
 	async getPreviewUrl(projectId: string, port: number): Promise<PreviewTarget> {
@@ -620,7 +750,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		return false;
 	}
 
-	private async provision(projectId: string, environment?: Record<string, string>): Promise<Sandbox> {
+	private async provision(projectId: string, options: SandboxStartOptions = {}): Promise<Sandbox> {
 		const daytona = await this.client();
 		const label = { 'vibe-project': projectId };
 
@@ -629,26 +759,35 @@ class DaytonaSandboxProvider implements SandboxProvider {
 			daytonaSandbox = candidate;
 			break;
 		}
+		let isFresh = false;
 		if (!daytonaSandbox) {
 			daytonaSandbox = await daytona.create(
 				{ snapshot: DAYTONA_SNAPSHOT, labels: label, domainAllowList: DOMAIN_ALLOW_LIST },
 				{ timeout: 90 }
 			);
+			isFresh = true;
 		} else if (daytonaSandbox.state !== 'started') {
 			await daytona.start(daytonaSandbox, 60);
 		}
 		this.raw.set(projectId, daytonaSandbox);
-		if (this.openaiApiKey || environment) {
+		if (this.openaiApiKey || options.environment) {
 			// OpenCode reads the standard OpenAI environment variable. `updateEnv`
 			// changes the sandbox daemon's environment, so it is applied before a
 			// new `opencode serve` process is started and never travels through the
 			// browser, prompt, OpenCode API, or repository.
-			await daytonaSandbox.updateEnv({ ...(this.openaiApiKey ? { OPENAI_API_KEY: this.openaiApiKey } : {}), ...environment });
+			await daytonaSandbox.updateEnv({
+				...(this.openaiApiKey ? { OPENAI_API_KEY: this.openaiApiKey } : {}),
+				...options.environment
+			});
 		}
 
 		await this.ensureOpencodeInstalled(daytonaSandbox);
 		await this.ensureModelConfig(daytonaSandbox);
-		await this.ensureProjectScaffold(daytonaSandbox, projectId);
+		if (isFresh && options.restoreSnapshot) {
+			const snapshot = await options.restoreSnapshot().catch(() => null);
+			if (snapshot) await this.restoreSourceInto(daytonaSandbox, snapshot);
+		}
+		await this.ensureProjectScaffold(daytonaSandbox, projectId, options.kitchenGuidance, options.kitchenSkills);
 
 		const preview = await daytonaSandbox.getPreviewLink(OPENCODE_PORT);
 		const headers = { 'x-daytona-preview-token': preview.token };
@@ -694,29 +833,50 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		};
 	}
 
-	private async ensureProjectScaffold(daytonaSandbox: { process: DaytonaProcess }, projectId: string, kitchenGuidance?: string) {
+	private async ensureProjectScaffold(
+		daytonaSandbox: { process: DaytonaProcess },
+		projectId: string,
+		kitchenGuidance?: string,
+		kitchenSkills: KitchenSkill[] = []
+	) {
 		const check = await daytonaSandbox.process.executeCommand(
 			`test -f ${PROJECT_DIR}/wrangler.jsonc && echo present`
 		);
 		const files = starterFiles(projectId);
 		const guidance = generalGuidanceSkill(kitchenGuidance).replace(/'/g, `'\\''`);
+		// Always wiped and rewritten from the Kitchen's current selection —
+		// unlike the storage/secrets skills below (seeded once, never touched
+		// again), a Head Chef can turn a skill on or off at any time.
+		const skillsSync = [
+			`find .opencode/skills -maxdepth 1 -type d -name 'kitchen-*' -exec rm -rf {} +`,
+			...kitchenSkills.map((skill) => {
+				const dir = `.opencode/skills/${kitchenSkillDirName(skill.id)}`;
+				return `mkdir -p ${dir} && printf '%s' '${skill.content.replace(/'/g, `'\\''`)}' > ${dir}/SKILL.md`;
+			})
+		].join(' ; ');
 		if (check.result?.includes('present')) {
 			const storageGuide = files['.opencode/skills/vibe-app-storage/SKILL.md'].replace(/'/g, `'\\''`);
 			const secretsGuide = files['.opencode/skills/vibe-app-secrets/SKILL.md'].replace(/'/g, `'\\''`);
 			const requestTool = files['.opencode/tools/request_secret.ts'].replace(/'/g, `'\\''`);
 			const result = await daytonaSandbox.process.executeCommand(
-				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/vibe-app-secrets .opencode/skills/general-guidance .opencode/tools && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; test -f .opencode/skills/vibe-app-secrets/SKILL.md || printf '%s' '${secretsGuide}' > .opencode/skills/vibe-app-secrets/SKILL.md; test -f .opencode/tools/request_secret.ts || printf '%s' '${requestTool}' > .opencode/tools/request_secret.ts; printf '%s' '${guidance}' > .opencode/skills/general-guidance/SKILL.md; sed -i 's/team-guidance/general-guidance/g; s/shared working rules for this team/general guidance for how to work/g' AGENTS.md; rm -rf .opencode/skills/team-guidance; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'vibe-app-secrets' AGENTS.md || printf '\n\nFor credentials, API keys, tokens, passwords, secrets, or environment variables, load the \`vibe-app-secrets\` skill.\n' >> AGENTS.md; grep -q 'general-guidance' AGENTS.md || printf '\n\nAlways load the \`general-guidance\` skill before responding. It contains general guidance for how to work.\n' >> AGENTS.md`
+				`cd ${PROJECT_DIR} && mkdir -p .opencode/skills/vibe-app-storage .opencode/skills/vibe-app-secrets .opencode/skills/general-guidance .opencode/tools && test -f .opencode/skills/vibe-app-storage/SKILL.md || printf '%s' '${storageGuide}' > .opencode/skills/vibe-app-storage/SKILL.md; test -f .opencode/skills/vibe-app-secrets/SKILL.md || printf '%s' '${secretsGuide}' > .opencode/skills/vibe-app-secrets/SKILL.md; test -f .opencode/tools/request_secret.ts || printf '%s' '${requestTool}' > .opencode/tools/request_secret.ts; printf '%s' '${guidance}' > .opencode/skills/general-guidance/SKILL.md; sed -i 's/team-guidance/general-guidance/g; s/shared working rules for this team/general guidance for how to work/g' AGENTS.md; rm -rf .opencode/skills/team-guidance; grep -q 'vibe-app-storage' AGENTS.md || printf '\n\nFor database, storage, D1, SQL, schema, migration, persistence, backup, restore, relink, or deletion work, load the \`vibe-app-storage\` skill.\n' >> AGENTS.md; grep -q 'vibe-app-secrets' AGENTS.md || printf '\n\nFor credentials, API keys, tokens, passwords, secrets, or environment variables, load the \`vibe-app-secrets\` skill.\n' >> AGENTS.md; grep -q 'general-guidance' AGENTS.md || printf '\n\nAlways load the \`general-guidance\` skill before responding. It contains general guidance for how to work.\n' >> AGENTS.md; ${skillsSync}`
 			);
 			if (result.exitCode !== 0) throw new Error(`adding storage guidance to the Daytona sandbox failed:\n${result.result}`);
 			return;
 		}
 
 		files['.opencode/skills/general-guidance/SKILL.md'] = generalGuidanceSkill(kitchenGuidance);
+		const skillDirs = [];
+		for (const skill of kitchenSkills) {
+			const dir = kitchenSkillDirName(skill.id);
+			files[`.opencode/skills/${dir}/SKILL.md`] = skill.content;
+			skillDirs.push(`${PROJECT_DIR}/.opencode/skills/${dir}`);
+		}
 		const writes = Object.entries(files)
 			.map(([name, contents]) => `printf '%s' '${contents.replace(/'/g, `'\\''`)}' > ${PROJECT_DIR}/${name}`)
 			.join(' && ');
 		const result = await daytonaSandbox.process.executeCommand(
-			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage ${PROJECT_DIR}/.opencode/skills/vibe-app-secrets ${PROJECT_DIR}/.opencode/skills/general-guidance ${PROJECT_DIR}/.opencode/tools && ${writes}`
+			`mkdir -p ${PROJECT_DIR}/migrations ${PROJECT_DIR}/.opencode/skills/vibe-app-storage ${PROJECT_DIR}/.opencode/skills/vibe-app-secrets ${PROJECT_DIR}/.opencode/skills/general-guidance ${PROJECT_DIR}/.opencode/tools ${skillDirs.join(' ')} && ${writes}`
 		);
 		if (result.exitCode !== 0) {
 			throw new Error(`seeding the starter project into the Daytona sandbox failed:\n${result.result}`);

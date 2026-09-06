@@ -5,6 +5,8 @@ import { requireAppAccess } from '$lib/server/authz';
 import { getAppStorage, getOrCreateAppStorage } from '$lib/server/app-storage';
 import { effectiveAppSecrets, effectiveKitchenSecrets } from '$lib/server/secrets';
 import { getWorkerScriptId } from '$lib/server/cloudflare-access';
+import { markSourceSaved } from '$lib/server/control-plane';
+import { saveAppSource } from '$lib/server/app-source';
 
 // Resolution order mirrors resolveDefaultModel's Kitchen-override pattern:
 // a Kitchen's own CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID (stored as
@@ -52,6 +54,16 @@ export const POST: RequestHandler = async (event) => {
 			}
 		} catch (err) {
 			console.error('Unable to cache the Worker id for Access wiring', err);
+		}
+		// A successful deploy is a natural checkpoint — persist the source that
+		// produced it. Best-effort and never blocks the deploy response.
+		const bucket = event.platform?.env.APP_SOURCE;
+		if (bucket) {
+			event.platform?.ctx.waitUntil(
+				saveAppSource(bucket, app.id, getSandboxProvider())
+					.then(() => markSourceSaved(db, app.id))
+					.catch((err) => console.error(`Could not save ${app.id}'s source after deploy`, err))
+			);
 		}
 	}
 	return json(result);

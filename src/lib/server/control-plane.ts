@@ -1,4 +1,5 @@
 import { reconcileSandboxStates } from './opencode/sandbox';
+import { SKILL_CATALOG } from './skills';
 
 export type UserIdentity = { id: string; name: string; email: string };
 export type KitchenRole = 'head_chef' | 'chef';
@@ -87,7 +88,7 @@ export async function getOrganisationRole(db: D1Database, userId: string, organi
 export async function listKitchens(db: D1Database, userId: string) {
 	const result = await db
 		.prepare(
-			`SELECT DISTINCT k.id, k.name, k.organisation_id AS organisationId,
+			`SELECT DISTINCT k.id, k.name, k.description, k.organisation_id AS organisationId,
 			 (SELECT COUNT(*) FROM apps a WHERE a.kitchen_id = k.id) AS appCount,
 			 (SELECT COUNT(*) FROM kitchen_memberships m WHERE m.kitchen_id = k.id) AS memberCount,
 			 (SELECT u.name FROM kitchen_memberships hc
@@ -104,6 +105,7 @@ export async function listKitchens(db: D1Database, userId: string) {
 		.all<{
 			id: string;
 			name: string;
+			description: string;
 			organisationId: string;
 			appCount: number;
 			memberCount: number;
@@ -139,7 +141,7 @@ export async function createKitchen(
 export async function getKitchenAccess(db: D1Database, userId: string, kitchenId: string) {
 	return db
 		.prepare(
-			`SELECT k.id, k.name, k.organisation_id AS organisationId, k.agent_guidance AS agentGuidance,
+			`SELECT k.id, k.name, k.description, k.organisation_id AS organisationId, k.agent_guidance AS agentGuidance,
 			 CASE WHEN om.role = 'owner' THEN 'head_chef' ELSE km.role END AS role
 			 FROM kitchens k
 			 LEFT JOIN kitchen_memberships km ON km.kitchen_id = k.id AND km.user_id = ?
@@ -147,7 +149,87 @@ export async function getKitchenAccess(db: D1Database, userId: string, kitchenId
 			 WHERE k.id = ? AND (km.user_id IS NOT NULL OR om.role = 'owner')`
 		)
 		.bind(userId, userId, kitchenId)
-		.first<{ id: string; name: string; organisationId: string; agentGuidance: string; role: KitchenRole }>();
+		.first<{
+			id: string;
+			name: string;
+			description: string;
+			organisationId: string;
+			agentGuidance: string;
+			role: KitchenRole;
+		}>();
+}
+
+const MAX_KITCHEN_DESCRIPTION_LENGTH = 500;
+
+/** Only a Kitchen's Head Chef may rename it or change its short description. */
+export async function updateKitchen(
+	db: D1Database,
+	actorId: string,
+	kitchenId: string,
+	updates: { name?: string; description?: string }
+) {
+	const kitchen = await getKitchenAccess(db, actorId, kitchenId);
+	if (!kitchen) throw new Error('You do not have access to this Kitchen.');
+	if (kitchen.role !== 'head_chef') throw new Error('Only the Head Chef can rename or describe this Kitchen.');
+
+	const sets: string[] = [];
+	const binds: unknown[] = [];
+	if (updates.name !== undefined) {
+		const trimmed = updates.name.trim();
+		if (!trimmed) throw new Error('Kitchen name is required.');
+		sets.push('name = ?');
+		binds.push(trimmed);
+	}
+	if (updates.description !== undefined) {
+		const trimmed = updates.description.trim();
+		if (trimmed.length > MAX_KITCHEN_DESCRIPTION_LENGTH) {
+			throw new Error(`Description must be ${MAX_KITCHEN_DESCRIPTION_LENGTH} characters or fewer.`);
+		}
+		sets.push('description = ?');
+		binds.push(trimmed);
+	}
+	if (!sets.length) return;
+
+	binds.push(kitchenId);
+	try {
+		await db
+			.prepare(`UPDATE kitchens SET ${sets.join(', ')} WHERE id = ?`)
+			.bind(...binds)
+			.run();
+	} catch (err) {
+		if (String(err).includes('UNIQUE')) {
+			throw new Error('A Kitchen with that name already exists in this organisation.');
+		}
+		throw err;
+	}
+	await recordActivity(db, kitchen.organisationId, actorId, 'kitchen', kitchenId, 'updated');
+}
+
+export async function getKitchenSkillIds(db: D1Database, kitchenId: string): Promise<string[]> {
+	const result = await db
+		.prepare('SELECT skill_id AS skillId FROM kitchen_skills WHERE kitchen_id = ?')
+		.bind(kitchenId)
+		.all<{ skillId: string }>();
+	return result.results.map((row) => row.skillId);
+}
+
+/** Only a Kitchen's Head Chef may change which built-in skills every App agent in that Kitchen loads. */
+export async function setKitchenSkills(db: D1Database, actorId: string, kitchenId: string, skillIds: string[]) {
+	const kitchen = await getKitchenAccess(db, actorId, kitchenId);
+	if (!kitchen) throw new Error('You do not have access to this Kitchen.');
+	if (kitchen.role !== 'head_chef') throw new Error("Only the Head Chef can change this Kitchen's skills.");
+
+	const validIds = new Set(SKILL_CATALOG.map((s) => s.id));
+	const unique = [...new Set(skillIds)].filter((id) => validIds.has(id));
+	const timestamp = now();
+	await db.batch([
+		db.prepare('DELETE FROM kitchen_skills WHERE kitchen_id = ?').bind(kitchenId),
+		...unique.map((id) =>
+			db
+				.prepare('INSERT INTO kitchen_skills (kitchen_id, skill_id, created_at) VALUES (?, ?, ?)')
+				.bind(kitchenId, id, timestamp)
+		)
+	]);
 }
 
 export async function createApp(db: D1Database, user: UserIdentity, kitchenId: string, name: string) {
@@ -397,6 +479,7 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 		.prepare(
 			`SELECT a.id, a.name, a.kitchen_id AS kitchenId, k.name AS kitchenName, a.git_branch AS gitBranch,
 			 a.sandbox_id AS sandboxId, a.opencode_session_id AS opencodeSessionId,
+			 a.source_saved_at AS sourceSavedAt,
 			 k.agent_guidance AS agentGuidance,
 			 k.default_model_id AS defaultModelId, k.default_model_provider_id AS defaultModelProviderId,
 			 CASE WHEN om.role = 'owner' THEN 'head_chef' ELSE km.role END AS role
@@ -414,11 +497,17 @@ export async function getAppAccess(db: D1Database, userId: string, appId: string
 			gitBranch: string;
 			sandboxId: string | null;
 			opencodeSessionId: string | null;
+			sourceSavedAt: string | null;
 			agentGuidance: string;
 			defaultModelId: string | null;
 			defaultModelProviderId: string | null;
 			role: KitchenRole;
 		}>();
+}
+
+/** Best-effort bookkeeping only — the R2 object (see app-source.ts) is the source of truth for whether a snapshot exists. */
+export async function markSourceSaved(db: D1Database, appId: string) {
+	await db.prepare('UPDATE apps SET source_saved_at = ? WHERE id = ?').bind(now(), appId).run();
 }
 
 export async function renameApp(db: D1Database, actor: UserIdentity, appId: string, name: string) {
