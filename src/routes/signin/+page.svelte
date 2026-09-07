@@ -12,14 +12,22 @@
 	let name = $state('');
 	let status = $state<'idle' | 'sending' | 'sent' | 'error'>('idle');
 	let errorMessage = $state('');
+	let isAndroid = $state(false);
 
 	let next = $derived(page.url.searchParams.get('next') ?? '/home');
 	let prefillLocked = $derived(page.url.searchParams.get('lock') === '1');
-	let inboxLink = $derived(getInboxSearchLink(email, data.sendingDomain));
+	let inboxLink = $derived(getInboxSearchLink(email, data.sendingDomain, { android: isAndroid }));
 
 	$effect(() => {
 		const prefill = page.url.searchParams.get('email');
 		if (prefill) email = prefill;
+	});
+
+	$effect(() => {
+		// Prefer opening the recipient's own mail app over mobile Chrome's
+		// mail.google.com, which only resolves to the inbox if Chrome itself
+		// (not the app) already has a matching web session — see inbox-search.ts.
+		isAndroid = /Android/i.test(navigator.userAgent);
 	});
 
 	$effect(() => {
@@ -86,8 +94,7 @@
 					Open {inboxLink.provider} and search for it
 				</a>
 				<p class="mt-2 text-xs text-stone-400">
-					You'll need to already be signed in to {inboxLink.provider} in this browser. Don't see it
-					in your inbox? This searches Spam/Junk too.
+					Don't see it in your inbox? This searches Spam/Junk too.
 				</p>
 			{:else}
 				<p class="text-xs text-stone-400">Don't see it? Check your Spam or Junk folder.</p>
