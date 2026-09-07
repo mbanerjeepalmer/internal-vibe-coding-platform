@@ -86,7 +86,8 @@
 					Open {inboxLink.provider} and search for it
 				</a>
 				<p class="mt-2 text-xs text-stone-400">
-					Don't see it in your inbox? This searches Spam/Junk too.
+					You'll need to already be signed in to {inboxLink.provider} in this browser. Don't see it
+					in your inbox? This searches Spam/Junk too.
 				</p>
 			{:else}
 				<p class="text-xs text-stone-400">Don't see it? Check your Spam or Junk folder.</p>
