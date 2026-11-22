@@ -4,6 +4,7 @@
 	import ToolCall from '$lib/components/ToolCall.svelte';
 	import Composer from '$lib/components/Composer.svelte';
 	import FilesPanel from '$lib/components/FilesPanel.svelte';
+	import GitHubConnection from '$lib/components/GitHubConnection.svelte';
 	import { OpencodeSession, type PromptFile } from '$lib/opencode/session.svelte';
 	import { acceptAttribute, supportedCategoryLabel, supportsAnyAttachment, supportsAttachment } from '$lib/attachments';
 	import type { PageData } from './$types';
@@ -441,6 +442,7 @@
 				{/if}
 				{#if secretsError}<p class="text-[11px] text-red-600">{secretsError}</p>{/if}
 				{#if data.app.role === 'head_chef'}
+					<GitHubConnection appId={data.app.id} />
 					<button
 						type="button"
 						onclick={loadStorage}

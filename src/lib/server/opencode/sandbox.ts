@@ -8,6 +8,7 @@
 // which one is in play.
 
 import { env } from '$env/dynamic/private';
+import { dev } from '$app/environment';
 import type { Sandbox as DaytonaSandboxHandle } from '@daytona/sdk';
 
 export interface Sandbox {
@@ -153,6 +154,11 @@ function sortFileEntries(entries: FileEntry[]): FileEntry[] {
 // VCS metadata, and build output. Keeps snapshots small and avoids fighting
 // over files the tooling regenerates anyway.
 const SOURCE_EXPORT_EXCLUDES = [
+	'.env',
+	'.env.*',
+	'.dev.vars',
+	'.dev.vars.*',
+	'.mcp.json',
 	'node_modules',
 	'.git',
 	'.wrangler',
@@ -790,7 +796,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		if (!daytonaSandbox) throw new Error(`no Daytona sandbox provisioned for project ${projectId}`);
 		const exportPath = '/tmp/vibe-source-export.tar.gz';
 		const result = await daytonaSandbox.process.executeCommand(
-			`tar -czf ${exportPath} ${tarExcludeFlags().join(' ')} -C ${PROJECT_DIR} .`
+			`tar -czf ${exportPath} ${tarExcludeFlags().map((flag) => `'${flag}'`).join(' ')} -C ${PROJECT_DIR} .`
 		);
 		if (result.exitCode !== 0) throw new Error(`packing the project directory failed:\n${result.result}`);
 		const buffer = await daytonaSandbox.fs.downloadFile(exportPath);
@@ -959,7 +965,7 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		const result = await daytonaSandbox.process.executeCommand(
 			`cd ${PROJECT_DIR} && ${prepare}npx --yes wrangler@${WRANGLER_VERSION} ${args} --config ${config}`,
 			undefined,
-			{ ...creds, ...environment },
+			{ ...environment, ...creds },
 			120
 		);
 		const log = result.result ?? '';
@@ -1145,9 +1151,18 @@ let provider: SandboxProvider | undefined;
 
 export function getSandboxProvider(): SandboxProvider {
 	if (!provider) {
-		provider = env.DAYTONA_API_KEY
-			? new DaytonaSandboxProvider(env.DAYTONA_API_KEY, env.OPENAI_API_KEY)
-			: new LocalProcessSandboxProvider();
+		const selected = env.SANDBOX_PROVIDER || (env.DAYTONA_API_KEY ? 'daytona' : dev ? 'local' : '');
+		if (selected === 'daytona') {
+			if (!env.DAYTONA_API_KEY) throw new Error('SANDBOX_PROVIDER=daytona requires DAYTONA_API_KEY.');
+			provider = new DaytonaSandboxProvider(env.DAYTONA_API_KEY, env.OPENAI_API_KEY);
+		} else if (selected === 'local') {
+			if (!dev) throw new Error('The local sandbox provider is available only in development.');
+			provider = new LocalProcessSandboxProvider();
+		} else if (selected === 'cloudflare') {
+			throw new Error('Cloudflare sandbox support is not configured yet. Select daytona or use local development.');
+		} else {
+			throw new Error(selected ? `Unknown SANDBOX_PROVIDER: ${selected}` : 'Configure SANDBOX_PROVIDER and the required credentials.');
+		}
 	}
 	return provider;
 }

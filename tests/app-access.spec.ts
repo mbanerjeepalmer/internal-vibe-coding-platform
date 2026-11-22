@@ -56,4 +56,17 @@ test('the App access panel guards against configuring rules before a first deplo
 	const listResponse = await request.get(`/api/kitchen/${appId}/access-rules`);
 	expect(listResponse.ok()).toBe(true);
 	expect(await listResponse.json()).toEqual([]);
+
+	// Neither deployment operation may hand platform credentials to code in
+	// an agent-controlled workspace. They remain disabled until a trusted
+	// deployment pipeline exists; this must hold even for an authorised user.
+	for (const response of [
+		await request.post(`/api/kitchen/${appId}/deploy`),
+		await request.delete(`/api/kitchen/${appId}/deploy`)
+	]) {
+		expect(response.status()).toBe(503);
+		const body = await response.json();
+		expect(body.success).toBe(false);
+		expect(body.log).toContain('temporarily disabled');
+	}
 });

@@ -1,0 +1,9 @@
+{
+  // Separate throwaway Worker; this file does not change production bindings.
+  "name": "vibe-sandbox-spike",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-22",
+  "containers": [{ "class_name": "CloudflareSandbox", "scheduling_policy": "durable_object" }],
+  "durable_objects": { "bindings": [{ "name": "SANDBOX", "class_name": "CloudflareSandbox" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CloudflareSandbox"] }]
+}

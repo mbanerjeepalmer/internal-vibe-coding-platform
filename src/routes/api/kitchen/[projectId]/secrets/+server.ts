@@ -12,6 +12,9 @@ export const POST: RequestHandler = async (event) => {
 	const { db, user, app } = await requireAppAccess(event);
 	const body = await event.request.json() as { scope?: SecretScope; name?: string; value?: string; agentVisible?: boolean };
 	if (body.scope !== 'app' && body.scope !== 'kitchen') return json({ message: 'Invalid secret scope.' }, { status: 400 });
+	if (body.agentVisible !== undefined && typeof body.agentVisible !== 'boolean') {
+		return json({ message: 'Agent visibility must be a boolean.' }, { status: 400 });
+	}
 	await saveSecret(
 		db,
 		user.id,

@@ -64,10 +64,15 @@ export async function effectiveAppSecrets(db: D1Database, appId: string, keyMate
 	const key = requireKey(keyMaterial);
 	const app = await db.prepare('SELECT kitchen_id AS kitchenId FROM apps WHERE id = ?').bind(appId).first<{ kitchenId: string }>();
 	if (!app) throw new Error('App not found.');
+	// Resolve the App override before applying visibility. Otherwise a hidden
+	// App secret inadvertently exposes the Kitchen value with the same name.
+	// Do not rely on UNION ALL row ordering to choose the winning value.
 	const rows = await db.prepare(
-		`SELECT name, ciphertext, iv FROM secrets WHERE kitchen_id = ? AND agent_visible = 1
+		`SELECT k.name, k.ciphertext, k.iv FROM secrets k
+		 WHERE k.kitchen_id = ? AND k.agent_visible = 1
+		 AND NOT EXISTS (SELECT 1 FROM secrets a WHERE a.app_id = ? AND a.name = k.name)
 		 UNION ALL SELECT name, ciphertext, iv FROM secrets WHERE app_id = ? AND agent_visible = 1`
-	).bind(app.kitchenId, appId).all<{ name: string; ciphertext: string; iv: string }>();
+	).bind(app.kitchenId, appId, appId).all<{ name: string; ciphertext: string; iv: string }>();
 	return decryptRows(rows.results, key);
 }
 
