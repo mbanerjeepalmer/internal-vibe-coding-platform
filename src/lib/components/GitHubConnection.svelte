@@ -8,6 +8,8 @@
 	let busy = $state(false);
 	let message = $state('');
 	let more = $state(false);
+	let repoPage = $state(1);
+	let branchPage = $state(1);
 	async function importContent() {
 		if (!selected || !branch) return;
 		busy = true; message = ''; imported = '';
@@ -19,16 +21,16 @@
 		} catch (error) { message = error instanceof Error ? error.message : 'Import failed.'; }
 		finally { busy = false; }
 	}
-	async function load(repository?: string) {
+	async function load(repository?: string, page = 1) {
 		busy = true;
 		message = '';
 		try {
-			const query = repository ? `?repository=${encodeURIComponent(repository)}` : '';
+			const query = `?page=${page}${repository ? `&repository=${encodeURIComponent(repository)}` : ''}`;
 			const response = await fetch(`/api/kitchen/${appId}/github${query}`);
 			const result = await response.json() as { message?: string; repositories?: Array<{ fullName: string; private: boolean; defaultBranch: string }>; branches?: Array<{ name: string }>; hasMore?: boolean };
 			if (!response.ok) throw new Error(result.message ?? 'GitHub request failed.');
-			if (repository) branches = result.branches ?? [];
-			else { repositories = result.repositories ?? []; branches = null; }
+			if (repository) { branches = result.branches ?? []; branchPage = page; branch = ''; }
+			else { repositories = result.repositories ?? []; branches = null; selected = ''; branch = ''; repoPage = page; }
 			more = result.hasMore ?? false;
 		} catch (error) { message = error instanceof Error ? error.message : 'GitHub request failed.'; }
 		finally { busy = false; }
@@ -41,7 +43,7 @@
 	<button type="button" onclick={() => load()} disabled={busy} class="rounded border px-2 py-1 disabled:opacity-50">Browse repositories</button>
 	{#if repositories}
 		<label class="block">Repository
-			<select class="w-full rounded border p-1" bind:value={selected} onchange={() => { branches = null; branch = ''; if (selected) load(selected); }}>
+			<select class="w-full rounded border p-1" bind:value={selected} disabled={busy} onchange={() => { branches = null; branch = ''; if (selected) load(selected); }}>
 				<option value="">Choose a repository</option>
 				{#each repositories as repo (repo.fullName)}<option value={repo.fullName}>{repo.fullName}{repo.private ? ' (private)' : ''}</option>{/each}
 			</select>
@@ -49,14 +51,24 @@
 	{/if}
 	{#if branches}
 		<label class="block">Branch
-			<select class="w-full rounded border p-1" bind:value={branch}>
+			<select class="w-full rounded border p-1" bind:value={branch} disabled={busy}>
 				<option value="">Choose a branch</option>
 				{#each branches as item (item.name)}<option value={item.name}>{item.name}</option>{/each}
 			</select>
 		</label>
 		<button type="button" onclick={importContent} disabled={busy || !branch} class="rounded border px-2 py-1 disabled:opacity-50">Import a copy</button>
+		<div class="flex items-center gap-2">
+			<button type="button" onclick={() => load(selected, branchPage - 1)} disabled={busy || branchPage === 1} class="rounded border px-2 py-1 disabled:opacity-50">Previous branches</button>
+			<span>Page {branchPage}</span>
+			<button type="button" onclick={() => load(selected, branchPage + 1)} disabled={busy || !more} class="rounded border px-2 py-1 disabled:opacity-50">Next branches</button>
+		</div>
+	{:else if repositories}
+		<div class="flex items-center gap-2">
+			<button type="button" onclick={() => load(undefined, repoPage - 1)} disabled={busy || repoPage === 1} class="rounded border px-2 py-1 disabled:opacity-50">Previous repositories</button>
+			<span>Page {repoPage}</span>
+			<button type="button" onclick={() => load(undefined, repoPage + 1)} disabled={busy || !more} class="rounded border px-2 py-1 disabled:opacity-50">Next repositories</button>
+		</div>
 	{/if}
-	{#if more}<p>Only the first 100 results are shown.</p>{/if}
 	{#if message}<p class="text-red-600">{message}</p>{/if}
 	{#if imported}<p>{imported}</p>{/if}
 	<p>Import copies files into a new folder. It does not create a Git checkout or support Git history, syncing, pushing, or pull requests. Source snapshots exclude environment files and other secret-bearing paths; those files will not survive sandbox replacement.</p>

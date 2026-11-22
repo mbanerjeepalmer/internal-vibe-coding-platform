@@ -2,6 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireAppAccess } from '$lib/server/authz';
 import { effectiveKitchenSecrets } from '$lib/server/secrets';
+import { githubDiscoveryPath } from '$lib/server/github-discovery';
 
 // Read-only discovery. The token is a Kitchen secret which must not be sent
 // to the sandbox; only a Head Chef can use it to enumerate repositories.
@@ -17,13 +18,11 @@ export const GET: RequestHandler = async (event) => {
 	if (!token || /[\r\n]/.test(token)) throw error(503, 'The GitHub token is invalid; replace the Kitchen GITHUB_TOKEN.');
 
 	const repo = event.url.searchParams.get('repository');
-	let path = '/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member';
-	if (repo !== null) {
-		// GitHub owner/repository only; never let user input select another host.
-		if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9_.-]{1,100}$/.test(repo)) throw error(400, 'Enter a GitHub repository as owner/name.');
-		const [owner, name] = repo.split('/');
-		path = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/branches?per_page=100`;
-	}
+	const pageText = event.url.searchParams.get('page') ?? '1';
+	if (!/^[1-9]\d{0,3}$/.test(pageText)) throw error(400, 'Invalid page.');
+	let path: string;
+	try { path = githubDiscoveryPath(repo, Number(pageText)); }
+	catch { throw error(400, 'Invalid repository or page.'); }
 	const response = await fetch(`https://api.github.com${path}`, {
 		headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'vibe-kitchen', 'X-GitHub-Api-Version': '2022-11-28' },
 		redirect: 'error'
