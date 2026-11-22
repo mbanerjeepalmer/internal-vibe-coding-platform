@@ -85,7 +85,6 @@
 				<p class="text-xs text-stone-400">Don't see it? Check your Spam or Junk folder.</p>
 			{/if}
 		{:else}
-			<p class="mb-6 text-sm text-stone-500">Sign in with a magic link — no password needed.</p>
 			<form onsubmit={submit} class="flex flex-col gap-4">
 				<label class="block">
 					<span class="mb-1 block text-xs font-medium text-stone-600">Email</span>
