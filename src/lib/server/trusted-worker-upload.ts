@@ -5,8 +5,27 @@ export function prototypeDeploymentAccess(role: string, enabled?: string): 403 |
 	return null;
 }
 
+export type WorkerArtifact = { entrypoint: string; modules: Record<string, string> };
+
+/** Validates a bounded, code-only artifact. Project config is never forwarded. */
+export function validateWorkerArtifact(value: unknown): WorkerArtifact {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid artifact.');
+	const candidate = value as { entrypoint?: unknown; modules?: unknown };
+	if (typeof candidate.entrypoint !== 'string' || !candidate.modules || typeof candidate.modules !== 'object' || Array.isArray(candidate.modules)) throw new Error('Invalid artifact.');
+	const entries = Object.entries(candidate.modules);
+	if (entries.length === 0 || entries.length > 64) throw new Error('Invalid module count.');
+	let totalBytes = 0;
+	for (const [name, source] of entries) {
+		// Names become multipart fields; do not permit traversal or metadata collisions.
+		if (!/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\/[A-Za-z0-9_.-]+\.m?js$|^[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$/.test(name) || name.split('/').some(part => part === '.' || part === '..') || typeof source !== 'string' || !source) throw new Error('Invalid module.');
+		totalBytes += new TextEncoder().encode(source).byteLength;
+	}
+	if (totalBytes > 1_000_000 || !Object.hasOwn(candidate.modules, candidate.entrypoint)) throw new Error('Invalid artifact entrypoint or size.');
+	return candidate as WorkerArtifact;
+}
+
 /**
- * Prototype only: upload one already-built ES module from the control plane.
+ * Prototype only: upload already-built ES modules from the control plane.
  * The caller must authenticate and authorise the app before calling this.
  * No project code, config, dependency or build script runs with credentials.
  *
@@ -15,7 +34,7 @@ export function prototypeDeploymentAccess(role: string, enabled?: string): 403 |
  */
 export async function uploadPrototypeWorker(
 	appId: string,
-	moduleSource: string,
+	artifact: WorkerArtifact | string,
 	credentials: { accountId: string; apiToken: string },
 	request: typeof fetch = fetch
 ): Promise<void> {
@@ -27,12 +46,12 @@ export async function uploadPrototypeWorker(
 	if (!/^[0-9a-f]{32}$/i.test(credentials.accountId) || !credentials.apiToken) {
 		throw new Error('Invalid Cloudflare credentials.');
 	}
-	if (!moduleSource || new TextEncoder().encode(moduleSource).byteLength > 1_000_000) {
-		throw new Error('Worker module must be between 1 byte and 1 MB.');
-	}
+	const validated = validateWorkerArtifact(typeof artifact === 'string' ? { entrypoint: 'worker.js', modules: { 'worker.js': artifact } } : artifact);
 	const form = new FormData();
-	form.set('metadata', JSON.stringify({ main_module: 'worker.js', compatibility_date: '2026-08-30' }));
-	form.set('worker.js', new Blob([moduleSource], { type: 'application/javascript+module' }), 'worker.js');
+	form.set('metadata', JSON.stringify({ main_module: validated.entrypoint, compatibility_date: '2026-08-30' }));
+	for (const [name, source] of Object.entries(validated.modules)) {
+		form.set(name, new Blob([source], { type: 'application/javascript+module' }), name);
+	}
 	const script = `vibe-prototype-${appId.toLowerCase()}`;
 	const response = await request(`https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts/${script}`, {
 		method: 'PUT',

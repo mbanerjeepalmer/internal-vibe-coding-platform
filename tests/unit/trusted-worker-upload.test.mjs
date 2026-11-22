@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prototypeDeploymentAccess, uploadPrototypeWorker } from '../../src/lib/server/trusted-worker-upload.ts';
+import { prototypeDeploymentAccess, uploadPrototypeWorker, validateWorkerArtifact } from '../../src/lib/server/trusted-worker-upload.ts';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const creds = { accountId: 'a'.repeat(32), apiToken: 'example-token' };
@@ -27,7 +27,7 @@ test('rejects invalid targets and never includes provider error contents', async
 		assert.equal(error.message, 'Cloudflare Worker upload failed (HTTP 403).');
 		return true;
 	});
-	await assert.rejects(uploadPrototypeWorker(id, '', creds), /Worker module/);
+	await assert.rejects(uploadPrototypeWorker(id, '', creds), /Invalid module/);
 });
 
 
@@ -37,4 +37,17 @@ test('prototype upload is opt-in and restricted to head chefs', () => {
 	assert.equal(prototypeDeploymentAccess('head_chef'), 503);
 	assert.equal(prototypeDeploymentAccess('head_chef', 'false'), 503);
 	assert.equal(prototypeDeploymentAccess('head_chef', 'true'), null);
+});
+
+
+test('validates and uploads a bounded multi-module artifact', async () => {
+ const artifact = { entrypoint: 'index.js', modules: { 'index.js': 'import x from "./lib/a.js"; export default x;', 'lib/a.js': 'export default {}' } };
+ await uploadPrototypeWorker(id, artifact, creds, async (_url, init) => {
+   assert.equal(JSON.parse(init.body.get('metadata')).main_module, 'index.js');
+   assert.equal(await init.body.get('lib/a.js').text(), 'export default {}');
+   return Response.json({success: true});
+ });
+ assert.throws(() => validateWorkerArtifact({entrypoint:'index.js', modules: {'../index.js':'x'}}));
+ assert.throws(() => validateWorkerArtifact({entrypoint:'missing.js', modules: {'index.js':'x'}}));
+ assert.throws(() => validateWorkerArtifact({entrypoint:'index.js', modules: {'index.js':'x'.repeat(1000001)}}));
 });

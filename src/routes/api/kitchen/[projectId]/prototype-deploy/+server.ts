@@ -1,10 +1,10 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireAppAccess } from '$lib/server/authz';
-import { prototypeDeploymentAccess, uploadPrototypeWorker } from '$lib/server/trusted-worker-upload';
+import { prototypeDeploymentAccess, uploadPrototypeWorker, validateWorkerArtifact } from '$lib/server/trusted-worker-upload';
 
 /**
- * Experimental, single-module deployment. This endpoint does not build source
+ * Experimental, prebuilt-module deployment. This endpoint does not build source
  * or read the sandbox, and never runs project code with Cloudflare credentials.
  * It deliberately targets a different Worker than the normal deployment.
  */
@@ -44,11 +44,15 @@ export const POST: RequestHandler = async (event) => {
 	} catch {
 		return json({ success: false, message: 'Send a JSON object containing moduleSource.' }, { status: 400 });
 	}
-	if (!input || typeof input !== 'object' || !('moduleSource' in input) || typeof input.moduleSource !== 'string') {
-		return json({ success: false, message: 'Send a JSON object containing moduleSource.' }, { status: 400 });
-	}
-	if (!input.moduleSource || new TextEncoder().encode(input.moduleSource).byteLength > 1_000_000) {
-		return json({ success: false, message: 'Worker module must be between 1 byte and 1 MB.' }, { status: 400 });
+	let artifact;
+	try {
+		if (input && typeof input === 'object' && 'moduleSource' in input && typeof input.moduleSource === 'string') {
+			artifact = validateWorkerArtifact({ entrypoint: 'worker.js', modules: { 'worker.js': input.moduleSource } });
+		} else {
+			artifact = validateWorkerArtifact(input);
+		}
+	} catch {
+		return json({ success: false, message: 'Invalid code-only Worker artifact.' }, { status: 400 });
 	}
 	// Only dedicated prototype credentials are allowed. Never fall back to
 	// shared Kitchen or platform deployment credentials.
@@ -58,7 +62,7 @@ export const POST: RequestHandler = async (event) => {
 		return json({ success: false, message: 'Cloudflare deployment credentials are not configured.' }, { status: 503 });
 	}
 	try {
-		await uploadPrototypeWorker(app.id, input.moduleSource, { accountId, apiToken });
+		await uploadPrototypeWorker(app.id, artifact, { accountId, apiToken });
 		return json({ success: true, workerName: `vibe-prototype-${app.id.toLowerCase()}`, message: 'Prototype Worker uploaded. Bindings, static assets, migrations and a public URL are not configured by this endpoint.' });
 	} catch {
 		// Never surface provider messages or credential material to the browser.
