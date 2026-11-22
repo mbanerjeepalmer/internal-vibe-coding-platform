@@ -10,6 +10,23 @@
 	let more = $state(false);
 	let repoPage = $state(1);
 	let branchPage = $state(1);
+	let targetBranch = $state('');
+	let prTitle = $state('');
+	let prBody = $state('');
+	let pullRequest = $state<{ url: string; number: number } | null>(null);
+	async function createPullRequest() {
+		busy = true; message = ''; pullRequest = null;
+		try {
+			const response = await fetch(`/api/kitchen/${appId}/github/pull-request`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ repository: selected, head: branch, base: targetBranch, title: prTitle, body: prBody })
+			});
+			const result = await response.json() as { message?: string; url?: string; number?: number };
+			if (!response.ok || !result.url || !result.number) throw new Error(result.message ?? 'Could not create pull request.');
+			pullRequest = { url: result.url, number: result.number };
+		} catch (error) { message = error instanceof Error ? error.message : 'Could not create pull request.'; }
+		finally { busy = false; }
+	}
 	async function importContent() {
 		if (!selected || !branch) return;
 		busy = true; message = ''; imported = '';
@@ -43,7 +60,7 @@
 	<button type="button" onclick={() => load()} disabled={busy} class="rounded border px-2 py-1 disabled:opacity-50">Browse repositories</button>
 	{#if repositories}
 		<label class="block">Repository
-			<select class="w-full rounded border p-1" bind:value={selected} disabled={busy} onchange={() => { branches = null; branch = ''; if (selected) load(selected); }}>
+			<select class="w-full rounded border p-1" bind:value={selected} disabled={busy} onchange={() => { branches = null; branch = ''; pullRequest = null; targetBranch = repositories?.find((repo) => repo.fullName === selected)?.defaultBranch ?? ''; if (selected) load(selected); }}>
 				<option value="">Choose a repository</option>
 				{#each repositories as repo (repo.fullName)}<option value={repo.fullName}>{repo.fullName}{repo.private ? ' (private)' : ''}</option>{/each}
 			</select>
@@ -57,6 +74,15 @@
 			</select>
 		</label>
 		<button type="button" onclick={importContent} disabled={busy || !branch} class="rounded border px-2 py-1 disabled:opacity-50">Import a copy</button>
+		<details>
+			<summary class="cursor-pointer">Open a GitHub pull request</summary>
+			<p>Uses the selected branch already on GitHub; local changes are not pushed. The Kitchen token needs pull request write permission.</p>
+			<label class="block">Target branch <input class="w-full rounded border p-1" bind:value={targetBranch} disabled={busy} /></label>
+			<label class="block">Title <input class="w-full rounded border p-1" bind:value={prTitle} disabled={busy} maxlength="256" /></label>
+			<label class="block">Description <textarea class="w-full rounded border p-1" bind:value={prBody} disabled={busy} maxlength="65536"></textarea></label>
+			<button type="button" onclick={createPullRequest} disabled={busy || !branch || !targetBranch || !prTitle.trim()} class="rounded border px-2 py-1 disabled:opacity-50">Create pull request on GitHub</button>
+			{#if pullRequest}<p><a href={pullRequest.url} target="_blank" rel="noopener noreferrer" class="underline">View pull request #{pullRequest.number}</a></p>{/if}
+		</details>
 		<div class="flex items-center gap-2">
 			<button type="button" onclick={() => load(selected, branchPage - 1)} disabled={busy || branchPage === 1} class="rounded border px-2 py-1 disabled:opacity-50">Previous branches</button>
 			<span>Page {branchPage}</span>
@@ -71,5 +97,5 @@
 	{/if}
 	{#if message}<p class="text-red-600">{message}</p>{/if}
 	{#if imported}<p>{imported}</p>{/if}
-	<p>Import copies files into a new folder. It does not create a Git checkout or support Git history, syncing, pushing, or pull requests. Source snapshots exclude environment files and other secret-bearing paths; those files will not survive sandbox replacement.</p>
+	<p>Import copies files into a new folder. It does not create a Git checkout or support Git history, syncing, or pushing. Pull requests use branches already on GitHub. Source snapshots exclude environment files and other secret-bearing paths; those files will not survive sandbox replacement.</p>
 </div>
