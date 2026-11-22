@@ -21,12 +21,13 @@ const proxy: RequestHandler = async (event) => {
 	const target = await getSandboxProvider().getPreviewUrl(app.id, port);
 	const upstreamUrl = new URL(`${target.url}/${params.path ?? ''}${url.search}`);
 
-	const upstream = await fetch(upstreamUrl, {
+	const upstreamRequest = new Request(upstreamUrl, {
 		method: request.method,
 		headers: { ...target.headers },
 		body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
 		redirect: 'manual'
 	});
+	const upstream = await (target.fetch ? target.fetch(upstreamRequest) : fetch(upstreamRequest));
 
 	return new Response(upstream.body, {
 		status: upstream.status,

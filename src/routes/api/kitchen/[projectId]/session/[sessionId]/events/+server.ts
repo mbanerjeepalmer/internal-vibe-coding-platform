@@ -1,6 +1,6 @@
 import type { RequestHandler } from './$types';
 import { getSandboxProvider } from '$lib/server/opencode/sandbox';
-import { eventStreamRequest } from '$lib/server/opencode/client';
+import { fetchEventStream } from '$lib/server/opencode/client';
 import { requireActiveAppSession } from '$lib/server/authz';
 
 // Proxies opencode's durable per-session SSE stream as a same-origin SSE stream.
@@ -12,7 +12,7 @@ export const GET: RequestHandler = async (event) => {
 	const { params, url, fetch } = event;
 	const sandbox = await getSandboxProvider().getOrCreateSandbox(app.id);
 	const after = url.searchParams.get('after') ?? undefined;
-	const upstream = await fetch(eventStreamRequest(sandbox, params.sessionId, after));
+	const upstream = await fetchEventStream(sandbox, params.sessionId, after, fetch);
 
 	if (!upstream.ok || !upstream.body) {
 		return new Response(await upstream.text(), { status: upstream.status });

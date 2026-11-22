@@ -17,12 +17,16 @@ export interface Sandbox {
 	baseUrl: string;
 	/** Extra headers every request to `baseUrl` must carry (e.g. Daytona's preview-link token). */
 	headers?: Record<string, string>;
+	/** Optional binding-backed transport. The caller must authorize the app first. */
+	fetch?: (request: Request) => Promise<Response>;
 }
 
 /** A URL (+ any headers needed to reach it) for an arbitrary port inside a sandbox — e.g. a dev server the agent started. */
 export interface PreviewTarget {
 	url: string;
 	headers?: Record<string, string>;
+	/** Optional binding-backed transport; never exposed to the browser. */
+	fetch?: (request: Request) => Promise<Response>;
 }
 
 export interface DeployResult {
@@ -103,6 +107,8 @@ export interface SandboxProvider {
 	 * there's no ambiguity about which sandbox to run against.
 	 */
 	executeShellCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }>;
+	/** Executes in the project root; callers must supply a trusted command. */
+	executeProjectCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }>;
 	/**
 	 * Lists one directory's immediate entries inside a project's sandbox — the
 	 * App's file tree viewer loads one level at a time rather than walking the
@@ -554,6 +560,10 @@ class LocalProcessSandboxProvider implements SandboxProvider {
 		});
 	}
 
+	async executeProjectCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }> {
+		return this.executeShellCommand(projectId, command);
+	}
+
 	async listFiles(projectId: string, relPath: string, options?: SandboxStartOptions): Promise<FileEntry[]> {
 		await this.getOrCreateSandbox(projectId, options);
 		const cwd = this.cwds.get(projectId);
@@ -842,6 +852,10 @@ class DaytonaSandboxProvider implements SandboxProvider {
 		if (daytonaSandbox.state !== 'started') await daytona.start(daytonaSandbox, 60);
 		const result = await daytonaSandbox.process.executeCommand(command, undefined, undefined, 60);
 		return { exitCode: result.exitCode ?? 0, output: result.result ?? '' };
+	}
+
+	async executeProjectCommand(projectId: string, command: string): Promise<{ exitCode: number; output: string }> {
+		return this.executeShellCommand(projectId, `cd ${PROJECT_DIR} && ${command}`);
 	}
 
 	async listFiles(projectId: string, relPath: string, options?: SandboxStartOptions): Promise<FileEntry[]> {

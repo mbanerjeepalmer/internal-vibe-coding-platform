@@ -29,6 +29,27 @@ export class CloudflareSandbox extends DurableObject<Env> {
     const decoder = new TextDecoder();
     return { stdout: decoder.decode(output.stdout), stderr: decoder.decode(output.stderr), exitCode: output.exitCode };
   }
+
+  // Binding-only bridge for a future control plane. The caller must authorize
+  // the user against the app before obtaining the named object's stub. Never
+  // route a browser-supplied request or port to this method without that check.
+  // Do not wake a stopped container just to discover that its server is gone.
+  async proxy(port: number, request: Request): Promise<Response> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return new Response('Invalid port', { status: 400 });
+    }
+    const container = this.containerOrThrow();
+    if (!container.running) return new Response('Sandbox is not running', { status: 503 });
+    try {
+      return await container.getTcpPort(port).fetch(request);
+    } catch {
+      return new Response('Sandbox service is not responding', { status: 502 });
+    }
+  }
+
+  async isRunning(): Promise<boolean> {
+    return this.containerOrThrow().running;
+  }
 }
 
 export default {

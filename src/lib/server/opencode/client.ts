@@ -5,7 +5,7 @@
 import type { Sandbox } from './sandbox';
 import type { ModelCapabilities } from '$lib/attachments';
 
-type Target = Pick<Sandbox, 'baseUrl' | 'headers'>;
+type Target = Pick<Sandbox, 'baseUrl' | 'headers' | 'fetch'>;
 
 export interface ModelRef {
 	id: string;
@@ -30,10 +30,11 @@ export interface ModelSummary extends ModelRef {
 export const DEFAULT_MODEL: ModelRef = { id: 'gpt-5.6-luna', providerID: 'openai' };
 
 async function req<T>(target: Target, path: string, init?: RequestInit): Promise<T> {
-	const res = await fetch(`${target.baseUrl}${path}`, {
+	const request = new Request(`${target.baseUrl}${path}`, {
 		...init,
 		headers: { 'content-type': 'application/json', ...target.headers, ...init?.headers }
 	});
+	const res = await (target.fetch ? target.fetch(request) : fetch(request));
 	const body = await res.text();
 	if (!res.ok) {
 		throw new Error(`opencode ${init?.method ?? 'GET'} ${path} -> ${res.status}: ${body}`);
@@ -179,4 +180,10 @@ export function eventStreamRequest(target: Target, sessionId: string, after?: st
 	const url = new URL(`${target.baseUrl}/api/session/${sessionId}/event`);
 	if (after) url.searchParams.set('after', after);
 	return new Request(url, { headers: target.headers });
+}
+
+/** Uses the same transport for event streams as for regular API requests. */
+export function fetchEventStream(target: Target, sessionId: string, after?: string, fallback = fetch): Promise<Response> {
+	const request = eventStreamRequest(target, sessionId, after);
+	return target.fetch ? target.fetch(request) : fallback(request);
 }
