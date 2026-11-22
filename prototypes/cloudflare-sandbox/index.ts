@@ -3,6 +3,7 @@
 // command execution is exposed solely as Durable Object RPC for a future,
 // authorised control-plane integration.
 import { DurableObject } from 'cloudflare:workers';
+import { ProbeLifecycle } from './lifecycle';
 
 type Env = {
   SANDBOX_PROBE_TOKEN?: string;
@@ -16,18 +17,26 @@ export class CloudflareSandbox extends DurableObject<Env> {
     return container;
   }
 
+  private lifecycle?: ProbeLifecycle;
+
+  private getLifecycle(): ProbeLifecycle {
+    return this.lifecycle ??= new ProbeLifecycle(this.containerOrThrow(), this.ctx.storage);
+  }
+
+  async checkpointAndStop(): Promise<{ id: string; size: number }> {
+    return this.getLifecycle().checkpointAndStop();
+  }
+
   async execute(argv: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     if (!Array.isArray(argv) || argv.length === 0 || argv.some((arg) => typeof arg !== 'string')) {
       throw new Error('A nonempty command argument array is required');
     }
-    const container = this.containerOrThrow();
-    if (!container.running) {
-      container.start({ image: 'cloudflare/debian-trixie', entrypoint: ['sleep', 'infinity'], enableInternet: false });
-    }
-    const process = await container.exec(argv);
-    const output = await process.output();
-    const decoder = new TextDecoder();
-    return { stdout: decoder.decode(output.stdout), stderr: decoder.decode(output.stderr), exitCode: output.exitCode };
+    return this.getLifecycle().run(async () => {
+      const process = await this.containerOrThrow().exec(argv);
+      const output = await process.output();
+      const decoder = new TextDecoder();
+      return { stdout: decoder.decode(output.stdout), stderr: decoder.decode(output.stderr), exitCode: output.exitCode };
+    });
   }
 
   // Binding-only bridge for a future control plane. The caller must authorize

@@ -31,3 +31,9 @@ Transport unit tests: `node --test tests/unit/opencode-transport.test.mjs`. Proj
 `cloudflare-project.ts` provides a tested, binding-only handle for a canonical App UUID. It derives one Durable Object name per app and routes agent and preview requests to that app's bridge; it does not start a sandbox. The eventual request handler must call `requireAppAccess` before resolving this handle. The handle is not wired into provider selection: provisioning, persistence and an isolated live test remain prerequisites to enabling Cloudflare.
 
 Run its isolation and validation tests with `node --test tests/unit/cloudflare-project.test.mjs`.
+
+## Isolated lifecycle experiment
+
+The probe exposes a **binding-only**, explicit `checkpointAndStop` RPC. It saves a Cloudflare container snapshot and records its ID before stopping; a failed save or storage write leaves the container running. The next command restores that snapshot rather than silently starting empty. Commands and checkpoint calls are serialized and tested with simulated container/storage failures (`node --test tests/unit/cloudflare-lifecycle.test.mjs`). The original probe HTTP route does not expose this RPC. Wrangler 4.166.0 can bundle it with `--dry-run`; real snapshot creation and restoration have not been tested.
+
+This experiment does not solve workspace persistence: unexpected termination, detached agent writes and preview traffic are not serialized or checkpointed, and Cloudflare snapshots are beta. Snapshots include the writable container filesystem and may include credentials; do not use real project data or secrets in this probe. Do not enable the Cloudflare provider on the basis of these tests.
