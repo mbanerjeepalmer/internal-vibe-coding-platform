@@ -70,10 +70,9 @@ test('the App access panel guards against configuring rules before a first deplo
 		expect(body.log).toContain('temporarily disabled');
 	}
 
-	// The experimental upload route rejects malformed artifacts before any
-	// credentials are resolved or any Cloudflare request is attempted.
+	// Prototype deployment is disabled by default, even for a Head Chef.
 	const invalidPrototype = await request.post(`/api/kitchen/${appId}/prototype-deploy`, {
 		data: { moduleSource: '' }
 	});
-	expect(invalidPrototype.status()).toBe(400);
+	expect(invalidPrototype.status()).toBe(503);
 });

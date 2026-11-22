@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { uploadPrototypeWorker } from '../../src/lib/server/trusted-worker-upload.ts';
+import { prototypeDeploymentAccess, uploadPrototypeWorker } from '../../src/lib/server/trusted-worker-upload.ts';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const creds = { accountId: 'a'.repeat(32), apiToken: 'example-token' };
@@ -28,4 +28,13 @@ test('rejects invalid targets and never includes provider error contents', async
 		return true;
 	});
 	await assert.rejects(uploadPrototypeWorker(id, '', creds), /Worker module/);
+});
+
+
+test('prototype upload is opt-in and restricted to head chefs', () => {
+	assert.equal(prototypeDeploymentAccess('chef', 'true'), 403);
+	assert.equal(prototypeDeploymentAccess('chef'), 403);
+	assert.equal(prototypeDeploymentAccess('head_chef'), 503);
+	assert.equal(prototypeDeploymentAccess('head_chef', 'false'), 503);
+	assert.equal(prototypeDeploymentAccess('head_chef', 'true'), null);
 });

@@ -1,3 +1,10 @@
+/** Check the experimental upload gate before reading artifacts or credentials. */
+export function prototypeDeploymentAccess(role: string, enabled?: string): 403 | 503 | null {
+	if (role !== 'head_chef') return 403;
+	if (enabled !== 'true') return 503;
+	return null;
+}
+
 /**
  * Prototype only: upload one already-built ES module from the control plane.
  * The caller must authenticate and authorise the app before calling this.

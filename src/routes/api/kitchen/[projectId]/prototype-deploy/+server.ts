@@ -1,8 +1,7 @@
-import { json } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireAppAccess } from '$lib/server/authz';
-import { effectiveKitchenSecrets } from '$lib/server/secrets';
-import { uploadPrototypeWorker } from '$lib/server/trusted-worker-upload';
+import { prototypeDeploymentAccess, uploadPrototypeWorker } from '$lib/server/trusted-worker-upload';
 
 /**
  * Experimental, single-module deployment. This endpoint does not build source
@@ -10,7 +9,13 @@ import { uploadPrototypeWorker } from '$lib/server/trusted-worker-upload';
  * It deliberately targets a different Worker than the normal deployment.
  */
 export const POST: RequestHandler = async (event) => {
-	const { db, app } = await requireAppAccess(event);
+	const { app } = await requireAppAccess(event);
+	const platform = event.platform;
+	const access = prototypeDeploymentAccess(app.role, platform?.env.PROTOTYPE_DEPLOY_ENABLED);
+	if (access === 403) throw error(403, 'Only a Head Chef can upload prototype Workers.');
+	if (access === 503) {
+		return json({ success: false, message: 'Prototype deployment is disabled.' }, { status: 503 });
+	}
 	const contentLength = Number(event.request.headers.get('content-length') ?? 0);
 	if (!Number.isFinite(contentLength) || contentLength > 1_100_000) {
 		return json({ success: false, message: 'Artifact is too large.' }, { status: 413 });
@@ -45,12 +50,10 @@ export const POST: RequestHandler = async (event) => {
 	if (!input.moduleSource || new TextEncoder().encode(input.moduleSource).byteLength > 1_000_000) {
 		return json({ success: false, message: 'Worker module must be between 1 byte and 1 MB.' }, { status: 400 });
 	}
-	const platform = event.platform;
-	const kitchen = platform?.env.SECRET_ENCRYPTION_KEY
-		? await effectiveKitchenSecrets(db, app.kitchenId, platform.env.SECRET_ENCRYPTION_KEY)
-		: {};
-	const accountId = kitchen.CLOUDFLARE_ACCOUNT_ID ?? platform?.env.CLOUDFLARE_ACCOUNT_ID;
-	const apiToken = kitchen.CLOUDFLARE_API_TOKEN ?? platform?.env.CLOUDFLARE_API_TOKEN;
+	// Only dedicated prototype credentials are allowed. Never fall back to
+	// shared Kitchen or platform deployment credentials.
+	const accountId = platform?.env.PROTOTYPE_CLOUDFLARE_ACCOUNT_ID;
+	const apiToken = platform?.env.PROTOTYPE_CLOUDFLARE_API_TOKEN;
 	if (!accountId || !apiToken) {
 		return json({ success: false, message: 'Cloudflare deployment credentials are not configured.' }, { status: 503 });
 	}
