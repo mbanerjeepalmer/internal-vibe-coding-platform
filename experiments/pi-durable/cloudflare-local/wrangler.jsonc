@@ -1,0 +1,8 @@
+{
+  "name": "vibe-pi-local-experiment",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "ASSISTANT", "class_name": "Assistant" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Assistant"] }]
+}

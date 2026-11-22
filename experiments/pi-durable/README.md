@@ -37,3 +37,19 @@ For a credential-free check of the CLI path, use a separate state file:
 ```sh
 PI_PROTOTYPE_FAUX=1 node run.mjs /tmp /tmp/pi-demo/session.sqlite 'Hello'
 ```
+
+## Cloudflare Durable Object local experiment
+
+`cloudflare-local/` runs the actual Cloudflare Agents SDK `PiHarness` in a SQLite-backed Durable Object using Wrangler's local runtime and a scripted faux model. It is an isolated experiment; **do not deploy it**: it has no authentication or coding tools. It is not connected to the Vibe Kitchen application.
+
+From the repository root, run `npm ci`; then:
+
+```sh
+cd experiments/pi-durable
+npm ci
+./cloudflare-local/smoke.sh
+```
+
+The test starts Wrangler bound to localhost and uses a temporary local persistence directory, which it removes afterwards. It checks a completed request, a full Wrangler restart, deduplication on retry, and separate Durable Object state per session; it uses no secrets, external model, container, or remote Cloudflare resources. Port 8794 must be free. `WRANGLER` may be set to a compatible Wrangler executable. This does not validate mid-tool interruption, real models or sandbox tools, and is not an application integration. On restricted environments where Node cannot enumerate network interfaces, Wrangler may require a local-only workaround or a normal developer machine.
+
+`agents` and Pi packages are pinned to the tested versions. Pi's persisted format can change across minor versions; test rollback and recovery before changing them.
