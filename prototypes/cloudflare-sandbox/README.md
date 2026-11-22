@@ -25,3 +25,9 @@ The repository's Wrangler 4.127.1 rejects `scheduling_policy: durable_object`. T
 5. Test locally with Docker and compatible Wrangler, then in a separately configured Cloudflare account/environment. Verify authenticated previews, real model calls, sandbox stop/resume, snapshots, and project isolation before production use.
 
 Transport unit tests: `node --test tests/unit/opencode-transport.test.mjs`. Project checks: `npm run check` and `npm run build`. The isolated spike bundles using the Wrangler 4.166.0 dry-run command above.
+
+## Per-app binding bridge
+
+`cloudflare-project.ts` provides a tested, binding-only handle for a canonical App UUID. It derives one Durable Object name per app and routes agent and preview requests to that app's bridge; it does not start a sandbox. The eventual request handler must call `requireAppAccess` before resolving this handle. The handle is not wired into provider selection: provisioning, persistence and an isolated live test remain prerequisites to enabling Cloudflare.
+
+Run its isolation and validation tests with `node --test tests/unit/cloudflare-project.test.mjs`.
