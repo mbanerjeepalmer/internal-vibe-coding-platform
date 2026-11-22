@@ -4,7 +4,7 @@ Status: draft for discussion, 22 November 2026.
 
 ## Goal
 
-Make Vibe Kitchen a reliable multiplayer environment for building and deploying real applications. The first proving grounds are a language-learning app and Vibe Kitchen itself: connect a repository, work on a branch with an agent, run and preview it, and deploy safely. Cloud-hosted work is the immediate priority; a simple way to connect a local coding agent is a later capability.
+Make Vibe Kitchen a reliable multiplayer environment for building and deploying real applications. The immediate goal is to establish the platform prerequisites for building applications, including Vibe Kitchen itself: connect a repository, work on a branch with an agent, run and preview it, and deploy safely. The language-learning app is a subsequent use of the platform; its specific features are out of scope. Cloud-hosted work is the immediate priority; a simple way to connect a local coding agent is a later capability.
 
 ## Current starting point
 
@@ -25,7 +25,7 @@ Make Vibe Kitchen a reliable multiplayer environment for building and deploying 
 
 ## Agent direction
 
-Evaluate Pi and Pi Durable as the preferred next agent, after sandbox access works. Pi Durable is an agent-building framework, not automatically a drop-in replacement for the Pi coding agent or OpenCode. Spike its coding tools, streaming, model credentials, cancellation, session history and recovery against our UI and Cloudflare runtime; check where the durable runtime and its storage can actually run. Persist conversation and workspace state separately: resuming an agent does not itself restore unsaved files or undo a partly completed external action. Exercise interruption during a shell command and deployment, avoiding duplicate side effects. Keep OpenCode working until the replacement meets these checks. Avoid promising seamless switching or a multi-agent abstraction before it is needed.
+Support a configurable choice between OpenCode and a Pi Durable-based agent alongside the configurable choice between Daytona and Cloudflare. Implement OpenCode on Cloudflare first to unblock development, then implement and validate Pi Durable. Pi Durable is an agent-building framework, not automatically a drop-in replacement for the Pi coding agent or OpenCode. Spike its coding tools, streaming, model credentials, cancellation, session history and recovery against our UI and Cloudflare runtime; check where the durable runtime and its storage can actually run. Persist conversation and workspace state separately: resuming an agent does not itself restore unsaved files or undo a partly completed external action. Exercise interruption during a shell command and deployment, avoiding duplicate side effects. Keep OpenCode working until the replacement meets these checks. Avoid promising seamless switching or a multi-agent abstraction before it is needed.
 
 ## GitHub, branches and self-hosted development
 
@@ -60,14 +60,13 @@ Later, explore a small authenticated local connector for a developer's existing 
 - Two authorised users can join the same app, see updates and avoid silent conflicting writes.
 - A GitHub branch of Vibe Kitchen can be imported, changed, tested and pushed; its preview runs against separate non-production resources.
 - App and environment secrets can be supplied and rotated without entering chat or Git; access is scoped and tested, and the documented threat model reflects shell access.
-- A language-learning app can use persistent data and any required third-party service credentials in development and deployment.
+- The platform supports persistent app data and scoped third-party service credentials in development and deployment; application-specific features are out of scope.
 - User-facing URLs are meaningful once the naming/routing spike succeeds; errors identify actionable next steps.
 
 ## Decisions to discuss
 
-1. For the first language-learning app, what capabilities must the platform support beyond a database and ordinary API credentials—for example audio, speech recognition, or scheduled jobs? Start with the simplest app requirements rather than building every capability.
-2. Who should be able to deploy to production in a shared kitchen? Default proposal: authorised app members can deploy previews; production deploy is an explicit action restricted to the owner or designated role.
-3. Is a custom `apps.vibe.kitchen` domain acceptable for deployed apps, subject to the routing spike? Branch previews can have separate, non-production URLs.
+1. Who should be able to deploy to production in a shared kitchen? Default proposal: authorised app members can deploy previews; production deploy is an explicit action restricted to the owner or designated role.
+2. Is a custom `apps.vibe.kitchen` domain acceptable for deployed apps, subject to the routing spike? Branch previews can have separate, non-production URLs.
 
 ## References
 
