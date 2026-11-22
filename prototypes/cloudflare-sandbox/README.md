@@ -15,3 +15,13 @@ The main application currently expects an HTTP endpoint for OpenCode and uses pe
 ## Compatibility observed in this checkout
 
 The repository's Wrangler 4.127.1 rejects `scheduling_policy: durable_object`. The isolated spike successfully bundled with Wrangler 4.166.0 using `npx --yes wrangler@4.166.0 deploy --dry-run --config prototypes/cloudflare-sandbox/wrangler.jsonc`. The main application dependencies have not been upgraded. Docker is not installed in this session, so container execution has not been tested. Do not interpret this as a working Cloudflare provider.
+
+## Remaining integration
+
+1. Provide a separate Worker entry point that exports both SvelteKit's handler and the Durable Object class; bind that class using a Wrangler version supporting the durable-object container policy. Keep the existing production config unchanged until this is verified.
+2. Pass the project-specific binding into the provider with request context. The `cloudflareAgentTarget` and `cloudflarePreviewTarget` helpers in `src/lib/server/opencode/cloudflare-transport.ts` connect the resulting RPC proxy to the existing authorized OpenCode, event-stream, and preview routes.
+3. Implement project initialization, OpenCode process startup/readiness, skills and secrets, file operations, export/restore, and concurrent provisioning. Avoid feeding arbitrary repository code broad deployment credentials.
+4. Define how unsaved edits survive container idle/termination and test interruption and recovery. Existing R2 snapshots happen on deploy, teardown and explicit save, not every change; restoring an old snapshot after unexpected loss is not a guarantee of durability. Until this is solved, selection of the Cloudflare provider fails closed.
+5. Test locally with Docker and compatible Wrangler, then in a separately configured Cloudflare account/environment. Verify authenticated previews, real model calls, sandbox stop/resume, snapshots, and project isolation before production use.
+
+Transport unit tests: `node --test tests/unit/opencode-transport.test.mjs`. Project checks: `npm run check` and `npm run build`. The isolated spike bundles using the Wrangler 4.166.0 dry-run command above.

@@ -69,4 +69,11 @@ test('the App access panel guards against configuring rules before a first deplo
 		expect(body.success).toBe(false);
 		expect(body.log).toContain('temporarily disabled');
 	}
+
+	// The experimental upload route rejects malformed artifacts before any
+	// credentials are resolved or any Cloudflare request is attempted.
+	const invalidPrototype = await request.post(`/api/kitchen/${appId}/prototype-deploy`, {
+		data: { moduleSource: '' }
+	});
+	expect(invalidPrototype.status()).toBe(400);
 });

@@ -2,7 +2,7 @@
 
 The deployment endpoint is deliberately disabled: running Wrangler in an agent-controlled workspace gives project code access to the Cloudflare API token. The prototype in `src/lib/server/trusted-worker-upload.ts` demonstrates a different boundary: a control-plane process uploads an already-built, single ES module directly through Cloudflare's Workers API. The sandbox receives no deployment credentials. It only targets a separate `vibe-prototype-<app UUID>` Worker name, uses fixed metadata, and does not accept project-controlled Worker names or Wrangler configuration.
 
-This module is **not connected to the deployment endpoint and has not been tested against a live Cloudflare account**. The two mock tests can be run with `node --test tests/unit/trusted-worker-upload.test.mjs` on Node 24. A successful mock does not verify Cloudflare account behavior.
+This module is available through the separate authenticated `POST /api/kitchen/{appId}/prototype-deploy` endpoint, with a JSON body containing `moduleSource`. It accepts a single already-built ES module of at most 1 MB and uploads it to a separate prototype Worker; it does not build the project or set up bindings, assets, migrations, or a public URL. The regular deployment endpoint remains disabled. This endpoint **has not been tested against a live Cloudflare account**. Calling it makes a real Cloudflare API request and may create or replace the app’s prototype Worker. The two mock tests can be run with `node --test tests/unit/trusted-worker-upload.test.mjs` on Node 24. A successful mock does not verify Cloudflare account behavior.
 
 Before enabling a product deployment path:
 
